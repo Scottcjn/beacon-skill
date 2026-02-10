@@ -5,9 +5,13 @@
   "bin": {
     "beacon": "./bin/beacon.js"
   },
+  "scripts": {
+    "prepack": "node scripts/clean_pack.js"
+  },
   "files": [
     "bin/",
     "beacon_skill/",
+    "scripts/",
     "README.md",
     "SKILL.md",
     "LICENSE",
@@ -47,4 +51,3 @@
     "version": "0.1.0"
   }
 }
-

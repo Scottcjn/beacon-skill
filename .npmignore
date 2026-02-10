@@ -3,9 +3,10 @@ venv/
 dist/
 build/
 __pycache__/
+**/__pycache__/
 *.py[cod]
+**/*.py[cod]
 *.egg-info/
 .pytest_cache/
 tests/
 .github/
-
