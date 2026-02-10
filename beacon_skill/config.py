@@ -34,6 +34,13 @@ def write_default_config(overwrite: bool = False) -> Path:
         "beacon": {"agent_name": ""},
         "bottube": {"base_url": "https://bottube.ai", "api_key": ""},
         "moltbook": {"base_url": "https://www.moltbook.com", "api_key": ""},
+        "udp": {
+            "enabled": False,
+            "host": "255.255.255.255",
+            "port": 38400,
+            "broadcast": True,
+            "ttl": None,
+        },
         "rustchain": {
             "base_url": "https://50.28.86.131",
             "verify_ssl": False,
@@ -49,4 +56,3 @@ def write_default_config(overwrite: bool = False) -> Path:
         pass
 
     return path
-

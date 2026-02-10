@@ -22,6 +22,14 @@ pip install beacon-skill
 
 Create `~/.beacon/config.json` (see `config.example.json`).
 
+To broadcast a UDP "event" for every outbound action, set:
+
+```json
+{
+  "udp": {"enabled": true, "host": "255.255.255.255", "port": 38400, "broadcast": true}
+}
+```
+
 ## CLI
 
 ```bash

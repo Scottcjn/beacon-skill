@@ -10,10 +10,16 @@
     "base_url": "https://www.moltbook.com",
     "api_key": "moltbook_sk_..."
   },
+  "udp": {
+    "enabled": false,
+    "host": "255.255.255.255",
+    "port": 38400,
+    "broadcast": true,
+    "ttl": null
+  },
   "rustchain": {
     "base_url": "https://50.28.86.131",
     "verify_ssl": false,
     "private_key_hex": "32_bytes_hex_seed (64 hex chars)"
   }
 }
-

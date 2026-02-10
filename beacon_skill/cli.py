@@ -61,6 +61,28 @@ def _default_human_message(kind: str, links: List[str], bounty_url: Optional[str
     return "Ping."
 
 
+def _maybe_udp_emit(cfg: Dict[str, Any], event: Dict[str, Any]) -> None:
+    """Best-effort: emit an event envelope on the configured LAN UDP bus."""
+    udp_cfg = cfg.get("udp") or {}
+    if not bool(udp_cfg.get("enabled")):
+        return
+    host = str(udp_cfg.get("host") or "255.255.255.255")
+    port = int(udp_cfg.get("port") or 38400)
+    broadcast = bool(udp_cfg.get("broadcast", True))
+    ttl = udp_cfg.get("ttl", None)
+    try:
+        ttl_int = int(ttl) if ttl is not None else None
+    except Exception:
+        ttl_int = None
+
+    try:
+        env = _build_envelope(cfg, "event", f"udp:{host}:{port}", [], {"event": event})
+        udp_send(host, port, env.encode("utf-8", errors="replace"), broadcast=broadcast, ttl=ttl_int)
+    except Exception:
+        # Never block primary actions on UDP.
+        return
+
+
 def cmd_init(args: argparse.Namespace) -> int:
     path = write_default_config(overwrite=args.overwrite)
     print(str(path))
@@ -248,6 +270,16 @@ def cmd_bottube_ping_agent(args: argparse.Namespace) -> int:
     )
 
     append_jsonl("outbox.jsonl", {"platform": "bottube", "to": args.agent_name, "result": result, "ts": int(time.time())})
+    _maybe_udp_emit(cfg, {
+        "platform": "bottube",
+        "action": "ping-agent",
+        "to_agent": args.agent_name,
+        "video_id": result.get("video_id"),
+        "like": bool(args.like),
+        "subscribe": bool(args.subscribe),
+        "comment": bool(comment),
+        "tip": float(args.tip) if args.tip is not None else None,
+    })
     print(json.dumps(result, indent=2))
     return 0
 
@@ -299,6 +331,14 @@ def cmd_bottube_ping_video(args: argparse.Namespace) -> int:
         tip_message=tip_msg,
     )
     append_jsonl("outbox.jsonl", {"platform": "bottube", "to_video": args.video_id, "result": result, "ts": int(time.time())})
+    _maybe_udp_emit(cfg, {
+        "platform": "bottube",
+        "action": "ping-video",
+        "video_id": args.video_id,
+        "like": bool(args.like),
+        "comment": bool(comment),
+        "tip": float(args.tip) if args.tip is not None else None,
+    })
     print(json.dumps(result, indent=2))
     return 0
 
@@ -314,6 +354,11 @@ def cmd_moltbook_upvote(args: argparse.Namespace) -> int:
         return 0
     result = client.upvote(int(args.post_id))
     append_jsonl("outbox.jsonl", {"platform": "moltbook", "upvote": int(args.post_id), "result": result, "ts": int(time.time())})
+    _maybe_udp_emit(cfg, {
+        "platform": "moltbook",
+        "action": "upvote",
+        "post_id": int(args.post_id),
+    })
     print(json.dumps(result, indent=2))
     return 0
 
@@ -335,6 +380,12 @@ def cmd_moltbook_post(args: argparse.Namespace) -> int:
         return 0
     result = client.create_post(args.submolt, args.title, content, force=args.force)
     append_jsonl("outbox.jsonl", {"platform": "moltbook", "post": {"submolt": args.submolt, "title": args.title}, "result": result, "ts": int(time.time())})
+    _maybe_udp_emit(cfg, {
+        "platform": "moltbook",
+        "action": "post",
+        "submolt": args.submolt,
+        "title": args.title,
+    })
     print(json.dumps(result, indent=2))
     return 0
 
@@ -387,6 +438,15 @@ def cmd_rustchain_pay(args: argparse.Namespace) -> int:
 
     result = client.transfer_signed(payload)
     append_jsonl("outbox.jsonl", {"platform": "rustchain", "pay": {"to": args.to_address, "amount_rtc": float(args.amount_rtc)}, "result": result, "ts": int(time.time())})
+    _maybe_udp_emit(cfg, {
+        "platform": "rustchain",
+        "action": "pay",
+        "to_address": args.to_address,
+        "amount_rtc": float(args.amount_rtc),
+        "memo": args.memo or "",
+        "nonce": payload.get("nonce"),
+        "from_address": payload.get("from_address"),
+    })
     print(json.dumps(result, indent=2))
     return 0
 

@@ -52,6 +52,16 @@ Listen (prints JSON, appends to `~/.beacon/inbox.jsonl`):
 beacon udp listen --port 38400
 ```
 
+Auto-emit events (so every `beacon bottube/moltbook/rustchain ...` action also broadcasts a UDP event envelope):
+
+Edit `~/.beacon/config.json`:
+
+```json
+{
+  "udp": { "enabled": true, "host": "255.255.255.255", "port": 38400, "broadcast": true, "ttl": null }
+}
+```
+
 ## Works With Grazer
 
 Use Grazer for discovery and Beacon for action:
