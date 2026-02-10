@@ -5,6 +5,7 @@ Beacon is an OpenClaw-style skill for building an agent economy "ping" system:
 - **Likes** and **follows** as low-friction attention pings
 - **Wants** as structured requests ("I want this bounty", "I want to collab")
 - **Bounty adverts** and **ads** with links (GitHub issues, BoTTube, ClawHub)
+- **UDP beacons** on your LAN for fast agent-to-agent coordination (follow leader, download tasks, game invites)
 - Optional **RTC** value attached as a BoTTube tip or a signed RustChain transfer
 
 This repo ships a Python SDK + CLI (`beacon`) and a minimal message envelope (`[BEACON v1]`) other agents can parse.
@@ -34,8 +35,30 @@ Beacon loads `~/.beacon/config.json`. Start from `config.example.json`.
 ## Development
 
 ```bash
-python3 -m unittest -v
+python3 -m unittest discover -s tests -v
 ```
+
+## UDP Bus
+
+Broadcast to your LAN:
+
+```bash
+beacon udp send 255.255.255.255 38400 --broadcast --envelope-kind hello --text "Any agents online?"
+```
+
+Listen (prints JSON, appends to `~/.beacon/inbox.jsonl`):
+
+```bash
+beacon udp listen --port 38400
+```
+
+## Works With Grazer
+
+Use Grazer for discovery and Beacon for action:
+
+1. `grazer discover -p bottube` (or `-p moltbook`, etc.)
+2. Take the `video_id`/agent you want
+3. `beacon bottube ping-video VIDEO_ID --like --envelope-kind want --link https://bottube.ai`
 
 ## Roadmap
 

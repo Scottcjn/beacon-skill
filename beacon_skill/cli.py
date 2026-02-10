@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional
 from .codec import decode_envelopes, encode_envelope
 from .config import load_config, write_default_config
 from .storage import append_jsonl
-from .transports import BoTTubeClient, MoltbookClient, RustChainClient, RustChainKeypair
+from .transports import BoTTubeClient, MoltbookClient, RustChainClient, RustChainKeypair, udp_listen, udp_send
 
 
 def _cfg_get(cfg: Dict[str, Any], *path: str, default: Any = None) -> Any:
@@ -74,6 +74,126 @@ def cmd_decode(args: argparse.Namespace) -> int:
         text = sys.stdin.read()
     envs = decode_envelopes(text)
     print(json.dumps({"count": len(envs), "envelopes": envs}, indent=2))
+    return 0
+
+
+def _parse_kv_fields(items: List[str]) -> Dict[str, Any]:
+    out: Dict[str, Any] = {}
+    for raw in items or []:
+        if "=" not in raw:
+            raise ValueError(f"Invalid --field (expected k=v): {raw}")
+        k, v = raw.split("=", 1)
+        k = k.strip()
+        v = v.strip()
+        if not k:
+            raise ValueError(f"Invalid --field (empty key): {raw}")
+
+        if v.lower() == "true":
+            out[k] = True
+        elif v.lower() == "false":
+            out[k] = False
+        elif v.lower() in ("null", "none"):
+            out[k] = None
+        else:
+            # int / float best-effort
+            try:
+                out[k] = int(v)
+                continue
+            except Exception:
+                pass
+            try:
+                out[k] = float(v)
+                continue
+            except Exception:
+                pass
+            out[k] = v
+    return out
+
+
+def cmd_udp_send(args: argparse.Namespace) -> int:
+    cfg = load_config()
+    host = args.host
+    port = int(args.port)
+
+    links = args.link or []
+    extra: Dict[str, Any] = {}
+    if args.bounty_url:
+        extra["bounty_url"] = args.bounty_url
+    if args.reward_rtc is not None:
+        extra["reward_rtc"] = float(args.reward_rtc)
+
+    # Arbitrary extra fields for "download/follow/leader/game" style messages.
+    try:
+        extra.update(_parse_kv_fields(args.field or []))
+    except ValueError as e:
+        print(str(e), file=sys.stderr)
+        return 2
+
+    text = args.text or ""
+    if args.envelope_kind:
+        if not text:
+            text = _default_human_message(args.envelope_kind, links, args.bounty_url, args.reward_rtc)
+        env = _build_envelope(cfg, args.envelope_kind, f"udp:{host}:{port}", links, extra)
+        text = f"{text}\n\n{env}" if text else env
+
+    payload = (text or "").encode("utf-8", errors="replace")
+    if not payload:
+        print("Nothing to send (provide --text and/or --envelope-kind)", file=sys.stderr)
+        return 2
+
+    if args.dry_run:
+        print(json.dumps({
+            "host": host,
+            "port": port,
+            "broadcast": bool(args.broadcast),
+            "ttl": args.ttl,
+            "bytes": len(payload),
+            "text": text,
+        }, indent=2))
+        return 0
+
+    udp_send(host, port, payload, broadcast=bool(args.broadcast), ttl=args.ttl)
+    append_jsonl("outbox.jsonl", {
+        "platform": "udp",
+        "to": f"{host}:{port}",
+        "broadcast": bool(args.broadcast),
+        "bytes": len(payload),
+        "ts": int(time.time()),
+    })
+    print(json.dumps({"ok": True, "to": f"{host}:{port}", "bytes": len(payload)}, indent=2))
+    return 0
+
+
+def cmd_udp_listen(args: argparse.Namespace) -> int:
+    bind_host = args.bind
+    port = int(args.port)
+    max_count = int(args.count) if args.count is not None else None
+    write_inbox = not bool(args.no_write)
+
+    seen = {"n": 0}
+
+    def on_msg(m: Any) -> None:
+        seen["n"] += 1
+        envs = decode_envelopes(m.text) if m.text else []
+        rec = {
+            "platform": "udp",
+            "from": f"{m.addr[0]}:{m.addr[1]}",
+            "received_at": m.received_at,
+            "text": m.text,
+            "envelopes": envs,
+        }
+        if write_inbox:
+            append_jsonl("inbox.jsonl", rec)
+        print(json.dumps(rec, indent=2))
+        sys.stdout.flush()
+
+        if max_count is not None and seen["n"] >= max_count:
+            raise KeyboardInterrupt()
+
+    try:
+        udp_listen(bind_host, port, on_msg, timeout_s=args.timeout)
+    except KeyboardInterrupt:
+        pass
     return 0
 
 
@@ -282,6 +402,32 @@ def main(argv: Optional[List[str]] = None) -> None:
     sp = sub.add_parser("decode", help="Extract [BEACON v1] envelopes from text (stdin or --file)")
     sp.add_argument("--file", type=argparse.FileType("r", encoding="utf-8"), default=None)
     sp.set_defaults(func=cmd_decode)
+
+    # UDP
+    u = sub.add_parser("udp", help="Local UDP beacon bus (broadcast/listen)")
+    usub = u.add_subparsers(dest="ucmd", required=True)
+
+    sp = usub.add_parser("send", help="Send a UDP beacon message")
+    sp.add_argument("host", help="Destination host/IP (use 255.255.255.255 for broadcast)")
+    sp.add_argument("port", type=int, help="Destination port")
+    sp.add_argument("--broadcast", action="store_true", help="Enable UDP broadcast socket option")
+    sp.add_argument("--ttl", type=int, default=None, help="IP TTL (optional)")
+    sp.add_argument("--text", default="", help="Human message text")
+    sp.add_argument("--envelope-kind", default=None, help="Embed a [BEACON v1] envelope (kind: like|want|bounty|ad|hello|link)")
+    sp.add_argument("--link", action="append", default=[], help="Attach a link (repeatable)")
+    sp.add_argument("--bounty-url", default=None, help="Attach a bounty URL")
+    sp.add_argument("--reward-rtc", type=float, default=None, help="Attach a bounty reward (RTC)")
+    sp.add_argument("--field", action="append", default=[], help="Attach extra fields (k=v) for agent ops: download/follow/leader/game")
+    sp.add_argument("--dry-run", action="store_true")
+    sp.set_defaults(func=cmd_udp_send)
+
+    sp = usub.add_parser("listen", help="Listen for UDP beacon messages")
+    sp.add_argument("--bind", default="0.0.0.0", help="Bind host (default 0.0.0.0)")
+    sp.add_argument("--port", type=int, required=True, help="UDP port to listen on")
+    sp.add_argument("--timeout", type=float, default=None, help="Exit after N seconds of inactivity")
+    sp.add_argument("--count", type=int, default=None, help="Exit after N messages")
+    sp.add_argument("--no-write", action="store_true", help="Do not append to ~/.beacon/inbox.jsonl")
+    sp.set_defaults(func=cmd_udp_listen)
 
     # BoTTube
     bottube = sub.add_parser("bottube", help="BoTTube pings (like/comment/tip)")
