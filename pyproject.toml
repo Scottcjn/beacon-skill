@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "beacon-skill"
-version = "2.11.0"
+version = "2.11.1"
 description = "Beacon - the AI agent orchestrator. 11 transports (BoTTube, Moltbook, ClawCities, Clawsta, 4Claw, PinchedIn, ClawTasks, ClawNews, RustChain, UDP, Webhook). Heartbeat, mayday, accords, virtual cities, proof-of-thought, external relay, memory markets, hybrid districts."
 readme = "README.md"
 license = {text = "MIT"}
