@@ -144,7 +144,7 @@ class RelayManager:
         provider: str = "other",
         capabilities: Optional[List[str]] = None,
         webhook_url: str = "",
-        name: str = "",
+        name: str,
         signature: str = "",
         metadata: Optional[Dict] = None,
     ) -> Dict[str, Any]:
@@ -156,13 +156,29 @@ class RelayManager:
             provider: Model provider (e.g. "xai", "anthropic").
             capabilities: List of capability domains.
             webhook_url: Optional callback URL for incoming messages.
-            name: Human-readable agent name.
+            name: Unique agent name (required). Generic AI model names are rejected.
             signature: Ed25519 signature of registration payload for verification.
             metadata: Additional metadata.
 
         Returns:
             Dict with agent_id, relay_token, atlas_address info.
         """
+        # Validate name — required, no generic AI model names
+        if not name or not name.strip():
+            return {"error": "name is required — choose a unique agent name (not a generic model name)"}
+        name = name.strip()
+        _banned = [
+            "grok", "claude", "gemini", "gpt", "llama", "mistral", "deepseek",
+            "qwen", "phi", "falcon", "palm", "bard", "copilot", "chatgpt",
+            "openai", "anthropic", "google", "meta", "xai", "test agent",
+            "my agent", "unnamed", "default", "agent", "bot", "assistant",
+            "openclaw-agent", "openclaw agent",
+        ]
+        name_lower = name.lower()
+        for banned in _banned:
+            if banned in name_lower:
+                return {"error": f"Generic AI model names are not allowed. Choose a unique name. (rejected: '{banned}')"}
+
         # Validate pubkey
         try:
             pubkey_bytes = bytes.fromhex(pubkey_hex)
@@ -202,7 +218,7 @@ class RelayManager:
             "last_heartbeat": now,
             "beat_count": 0,
             "status": "active",
-            "name": name or f"{model_id} ({provider})",
+            "name": name,
             "metadata": metadata or {},
         }
         self._save_agents(agents)

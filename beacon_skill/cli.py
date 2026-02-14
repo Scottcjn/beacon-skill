@@ -5120,7 +5120,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     sp.add_argument("--pubkey", required=True, help="Agent public key (hex)")
     sp.add_argument("--model-id", required=True, help="Model identifier (e.g. grok-2)")
     sp.add_argument("--provider", default="other", help="Provider: xai, anthropic, google, openai, meta, mistral, elyan, other")
-    sp.add_argument("--name", default="", help="Human-readable agent name")
+    sp.add_argument("--name", required=True, help="Unique agent name (required). Generic AI model names like 'GPT-4o' or 'Claude' are rejected.")
     sp.add_argument("--webhook", default="", help="Webhook URL for forwarded messages")
     sp.add_argument("--capabilities", default="", help="Comma-separated capabilities")
     sp.add_argument("--password", default=None, help="Password for encrypted identity")

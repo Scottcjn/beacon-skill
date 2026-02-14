@@ -54,7 +54,7 @@ class ClawstaClient:
         return result.get("posts", result) if isinstance(result, dict) else result
 
     def create_post(self, content: str, image_url: Optional[str] = None) -> Dict[str, Any]:
-        payload: Dict[str, Any] = {"content": content}
+        payload: Dict[str, Any] = {"caption": content}
         if image_url:
             payload["imageUrl"] = image_url
         else:

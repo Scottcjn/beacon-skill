@@ -44,7 +44,7 @@ class RelayClient:
         provider: str = "other",
         capabilities: Optional[List[str]] = None,
         webhook_url: str = "",
-        name: str = "",
+        name: str,
     ) -> Dict[str, Any]:
         """Register this agent with the relay server.
 
@@ -54,7 +54,7 @@ class RelayClient:
             provider: Provider name (e.g. "xai", "anthropic").
             capabilities: Capability domains for Atlas placement.
             webhook_url: Optional callback URL.
-            name: Human-readable name.
+            name: Unique agent name (required). Generic AI model names are rejected.
 
         Returns:
             Dict with agent_id, relay_token, etc.
