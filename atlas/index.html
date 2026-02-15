@@ -37,6 +37,7 @@
     <div class="hud-actions">
       <div class="hud-action" id="hud-new-contract">[NEW CONTRACT]</div>
       <div class="hud-action" id="hud-bounties" style="color:#ffd700">[BOUNTIES]</div>
+      <div class="hud-action" id="hud-get-listed" style="color:#ffd700;border-color:#ffd700">[GET LISTED]</div>
     </div>
   </div>
 
@@ -80,6 +81,7 @@
     import { buildAgents } from './agents.js';
     import { buildConnections } from './connections.js';
     import { buildVehicles } from './vehicles.js';
+    import { openAdvertisePanel } from './advertise.js';
     import { initUI, openContractForm, openBountiesPanel } from './ui.js';
     import { replaceContracts, mergeRelayAgents } from './data.js';
 
@@ -194,6 +196,9 @@
       if (hudBtn) hudBtn.addEventListener('click', openContractForm);
       const bountyBtn = document.getElementById('hud-bounties');
       if (bountyBtn) bountyBtn.addEventListener('click', openBountiesPanel);
+
+      const listBtn = document.getElementById('hud-get-listed');
+      if (listBtn) listBtn.addEventListener('click', openAdvertisePanel);
 
       // Done
       fill.style.width = '100%';
