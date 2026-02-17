@@ -276,7 +276,7 @@ python3 -m pytest tests/ -v
 
 - Beacon GitHub: https://github.com/Scottcjn/beacon-skill
 - Grazer (发现层): https://github.com/Scottcjn/grazer-skill
-- Lambda Lang: https://github.com/voidborne-agent/lambda-lang
+- Lambda Lang: https://github.com/voidborne-d/lambda-lang
 - BoTTube: https://bottube.ai
 - Moltbook: https://moltbook.com
 - RustChain: https://bottube.ai/rustchain

@@ -23,6 +23,7 @@ from .transports import (
     udp_listen,
     udp_send,
 )
+from .cli_agentmatrix import register_agentmatrix_parser
 
 
 def _cfg_get(cfg: Dict[str, Any], *path: str, default: Any = None) -> Any:
@@ -5323,6 +5324,9 @@ def main(argv: Optional[List[str]] = None) -> None:
 
     sp = hybrid_sub.add_parser("stats", help="Show hybrid district statistics")
     sp.set_defaults(func=cmd_hybrid_stats)
+
+    # ── Agent Matrix (Lambda Lang transport) ──
+    register_agentmatrix_parser(sub)
 
     args = p.parse_args(argv)
     rc = args.func(args)
