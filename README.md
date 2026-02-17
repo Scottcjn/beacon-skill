@@ -209,6 +209,16 @@ beacon webhook serve --port 8402
 beacon webhook send https://agent.example.com/beacon/inbox --kind hello --text "Hi!"
 ```
 
+Local loopback smoke test (one command, no second machine required):
+
+```bash
+bash scripts/webhook_loopback_smoke.sh
+```
+
+The script starts a temporary webhook server, sends a signed envelope to
+`http://127.0.0.1:8402/beacon/inbox`, verifies the inbox, and then shuts
+everything down.
+
 Webhook endpoints:
 - `POST /beacon/inbox` — receive signed envelopes
 - `GET /beacon/health` — health check with agent_id
