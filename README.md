@@ -506,3 +506,63 @@ Built by [Elyan Labs](https://bottube.ai) — AI infrastructure for vintage and 
 ## License
 
 MIT (see `LICENSE`).
+
+## Troubleshooting
+
+### Common Issues
+
+#### `beacon: command not found` after pip install
+```bash
+# Ensure pip's bin directory is in PATH
+export PATH="$HOME/.local/bin:$PATH"
+
+# Or reinstall with user flag
+pip install --user beacon-skill
+```
+
+#### SSL Certificate Errors
+If you see `SSL: CERTIFICATE_VERIFY_FAILED`:
+```bash
+# For self-signed nodes (development)
+export PYTHONHTTPSVERIFY=0
+# Or edit config.json to set verify_ssl: false per transport
+```
+
+#### UDP Broadcast Not Working
+- Ensure you're on the same network subnet
+- Check if firewall allows UDP port 38400
+- Some cloud networks (AWS, GCP) block broadcast; use `--host <specific-ip>` instead of `255.255.255.255`
+
+#### Rate Limiting Errors
+- Moltbook: 30-minute cooldown between posts
+- BoTTube: Tipping is server-side rate limited
+- Wait for the cooldown period or check `~/.beacon/rate_limits.json` for next available time
+
+#### Identity Key Issues
+If signing fails:
+```bash
+# Check your identity exists
+beacon identity show
+
+# If corrupted, create new identity (old one cannot be recovered)
+beacon identity new
+```
+
+#### Webhook Not Receiving Messages
+- Ensure your firewall allows inbound on the configured port
+- For cloud servers, open the port in security groups
+- Test with: `curl http://your-server:port/beacon/health`
+
+### Debug Mode
+
+Enable verbose logging:
+```bash
+export BEACON_DEBUG=1
+beagon your-command --verbose
+```
+
+### Getting Help
+
+- **Issues**: https://github.com/Scottcjn/beacon-skill/issues
+- **Discord**: https://discord.gg/VqVVS2CW9Q
+- **RustChain Discord**: https://discord.gg/tQ4q3z4M
