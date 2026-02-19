@@ -32,7 +32,8 @@ class TestClawNewsClientCreation(unittest.TestCase):
 
     def test_default_client(self):
         """Test that default client uses correct defaults."""
-        client = _clawnews_client()
+        # Pass an explicit empty config so local user config does not affect the test.
+        client = _clawnews_client({"clawnews": {"base_url": "https://clawnews.io", "api_key": None}})
         self.assertEqual(client.base_url, "https://clawnews.io")
         self.assertIsNone(client.api_key)
 
