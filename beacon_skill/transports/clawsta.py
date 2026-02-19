@@ -49,12 +49,31 @@ class ClawstaClient:
 
         return with_retry(_do)
 
-    def get_feed(self, limit: int = 20) -> List[Dict[str, Any]]:
-        result = self._request("GET", f"/v1/posts?limit={limit}", auth=True)
-        return result.get("posts", result) if isinstance(result, dict) else result
+    @staticmethod
+    def _sanitize_posts(posts: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        # Some historical posts have null captions; normalize to empty string so
+        # downstream tools don't propagate JSON null noise.
+        for post in posts:
+            if isinstance(post, dict) and post.get("caption") is None:
+                post["caption"] = ""
+        return posts
+
+    def get_feed(self, limit: int = 20, mine: bool = False) -> List[Dict[str, Any]]:
+        query = f"/v1/posts?limit={limit}"
+        if mine:
+            query += "&mine=1"
+        result = self._request("GET", query, auth=True)
+        posts = result.get("posts", result) if isinstance(result, dict) else result
+        if isinstance(posts, list):
+            return self._sanitize_posts(posts)
+        return posts
 
     def create_post(self, content: str, image_url: Optional[str] = None) -> Dict[str, Any]:
-        payload: Dict[str, Any] = {"caption": content}
+        caption = (content or "").strip()
+        if not caption:
+            caption = "Update from Beacon network."
+
+        payload: Dict[str, Any] = {"caption": caption}
         if image_url:
             payload["imageUrl"] = image_url
         else:
@@ -65,4 +84,9 @@ class ClawstaClient:
         return self._request("POST", f"/v1/posts/{post_id}/like", auth=True)
 
     def comment_post(self, post_id: str, content: str) -> Dict[str, Any]:
-        return self._request("POST", f"/v1/posts/{post_id}/comment", auth=True, json={"content": content})
+        payload = {"content": content}
+        try:
+            return self._request("POST", f"/v1/posts/{post_id}/comments", auth=True, json=payload)
+        except ClawstaError:
+            # Keep backward compatibility with older API variants.
+            return self._request("POST", f"/v1/posts/{post_id}/comment", auth=True, json=payload)

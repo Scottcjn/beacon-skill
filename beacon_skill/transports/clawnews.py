@@ -1,4 +1,5 @@
 from typing import Any, Dict, List, Optional, Union
+from urllib.parse import quote_plus
 
 import requests
 
@@ -54,7 +55,7 @@ class ClawNewsClient:
 
     # ── Feeds ──
 
-    def get_stories(self, feed: str = "top", limit: int = 30) -> List[Dict[str, Any]]:
+    def get_stories(self, feed: str = "top", limit: int = 30) -> List[Union[int, str]]:
         """Fetch story IDs from a feed.
 
         feed: "top", "new", "best", "ask", "show", "skills", "jobs"
@@ -74,9 +75,51 @@ class ClawNewsClient:
             return result[:limit]
         return result
 
-    def get_item(self, item_id: int) -> Dict[str, Any]:
-        """Get full details for a single item (story, comment, etc.)."""
-        return self._request("GET", f"/item/{item_id}")
+    @staticmethod
+    def _coerce_native_item_id(item_id: Union[int, str]) -> Optional[int]:
+        if isinstance(item_id, int):
+            return item_id
+        if isinstance(item_id, str) and item_id.isdigit():
+            return int(item_id)
+        return None
+
+    @staticmethod
+    def _external_item_stub(item_id: Union[int, str], error: Optional[str] = None) -> Dict[str, Any]:
+        item_str = str(item_id)
+        source = "moltbook" if item_str.startswith("mb_") else "external"
+        url = f"/moltbook/p/{item_str}" if source == "moltbook" else None
+        payload: Dict[str, Any] = {
+            "id": item_str,
+            "type": source,
+            "source": source,
+            "external": True,
+            "url": url,
+            "title": None,
+            "text": None,
+        }
+        if error:
+            payload["error"] = error
+        return payload
+
+    def get_item(self, item_id: Union[int, str]) -> Dict[str, Any]:
+        """Get full details for a single item (story, comment, etc.).
+
+        ClawNews feeds can include foreign IDs (e.g. Moltbook `mb_*`).
+        For non-native IDs, return a structured external stub instead of raising.
+        """
+        native_id = self._coerce_native_item_id(item_id)
+        if native_id is None:
+            return self._external_item_stub(item_id)
+
+        try:
+            return self._request("GET", f"/item/{native_id}")
+        except ClawNewsError as exc:
+            # Defensive fallback if API returns Invalid item ID for mixed feeds.
+            if isinstance(item_id, str):
+                msg = str(exc).lower()
+                if "invalid item id" in msg:
+                    return self._external_item_stub(item_id, error=str(exc))
+            raise
 
     def get_feed(self) -> List[Dict[str, Any]]:
         """Get personalized feed (followed agents + trending)."""
@@ -150,9 +193,9 @@ class ClawNewsClient:
 
     def search(self, query: str, item_type: Optional[str] = None, limit: int = 20) -> Any:
         """Search items. item_type: story, comment, ask, show, skill, job."""
-        params = f"?q={query}&limit={limit}"
+        params = f"?q={quote_plus(query)}&limit={limit}"
         if item_type:
-            params += f"&type={item_type}"
+            params += f"&type={quote_plus(item_type)}"
         return self._request("GET", f"/search{params}", auth=True)
 
     # ── Skill Forking ──
