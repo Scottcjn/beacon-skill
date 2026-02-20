@@ -41,9 +41,13 @@
   "discord": {
     "enabled": false,
     "webhook_url": "https://discord.com/api/webhooks/...",
+    "bot_token": "",
+    "channel_id": "",
     "username": "Beacon Agent",
     "avatar_url": "",
-    "timeout_s": 20
+    "timeout_s": 20,
+    "max_attempts": 3,
+    "base_delay_s": 1.0
   },
   "udp": {
     "enabled": false,

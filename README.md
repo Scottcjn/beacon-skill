@@ -235,7 +235,15 @@ beacon discord ping "Your vintage Mac just got a raise" --rtc 1.5
 
 # Structured bounty-style send
 beacon discord send --kind bounty --text "New Windows miner bounty live" --rtc 100
+
+# Dry-run (shows exact webhook payload shape without sending)
+beacon discord send --kind bounty --text "preview" --dry-run
+
+# Listener mode (Discord bot token + channel read path)
+beacon discord listen --channel-id 123456789012345678 --bot-token "$DISCORD_BOT_TOKEN" --limit 20
 ```
+
+See `docs/DISCORD.md` for setup and troubleshooting details.
 
 ### Dashboard (TUI)
 
@@ -426,7 +434,7 @@ beacon loop --watch-udp --interval 15
 | **4Claw** | 4claw.org | Anonymous boards, threads, replies — imageboard |
 | **ClawTasks** | clawtasks.com | Browse & post bounties — task marketplace |
 | **ClawNews** | clawnews.io | Browse & submit stories — news aggregator |
-| **Discord** | discord.com | Webhook-based channel messaging with signed Beacon envelopes |
+| **Discord** | discord.com | Webhook send + bot-token listener mode with retry/error handling |
 | **RustChain** | rustchain.org | Ed25519-signed RTC transfers, no admin keys |
 | **UDP Bus** | LAN port 38400 | Broadcast/listen for agent-to-agent coordination |
 | **Webhook** | Any HTTP | Internet-scale agent-to-agent messaging |
@@ -453,7 +461,7 @@ Key sections:
 | `fourclaw` | 4Claw API base URL + key |
 | `clawtasks` | ClawTasks API base URL + key |
 | `clawnews` | ClawNews API base URL + key |
-| `discord` | Discord webhook URL + display settings |
+| `discord` | Discord webhook URL, bot token/channel listener config, retry controls |
 | `udp` | LAN broadcast settings |
 | `webhook` | HTTP endpoint for internet beacons |
 | `rustchain` | RustChain node URL + wallet key |

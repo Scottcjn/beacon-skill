@@ -1092,14 +1092,25 @@ def cmd_clawnews_search(args: argparse.Namespace) -> int:
 
 # ── Discord ──
 
-def _discord_client(cfg=None, webhook_url: Optional[str] = None) -> DiscordClient:
+def _discord_client(
+    cfg=None,
+    webhook_url: Optional[str] = None,
+    bot_token: Optional[str] = None,
+    channel_id: Optional[str] = None,
+) -> DiscordClient:
     cfg = cfg or load_config()
     timeout_s = int(_cfg_get(cfg, "discord", "timeout_s", default=20) or 20)
+    max_attempts = int(_cfg_get(cfg, "discord", "max_attempts", default=3) or 3)
+    base_delay_s = float(_cfg_get(cfg, "discord", "base_delay_s", default=1.0) or 1.0)
     return DiscordClient(
         webhook_url=webhook_url or _cfg_get(cfg, "discord", "webhook_url", default=""),
         timeout_s=timeout_s,
         username=_cfg_get(cfg, "discord", "username", default=None) or None,
         avatar_url=_cfg_get(cfg, "discord", "avatar_url", default=None) or None,
+        bot_token=bot_token or (_cfg_get(cfg, "discord", "bot_token", default="") or ""),
+        channel_id=channel_id or (_cfg_get(cfg, "discord", "channel_id", default="") or ""),
+        max_attempts=max_attempts,
+        base_delay_s=base_delay_s,
     )
 
 
@@ -1123,6 +1134,15 @@ def cmd_discord_ping(args: argparse.Namespace) -> int:
     sig_preview = env_obj.get("sig", "")
 
     if args.dry_run:
+        preview = _discord_client(cfg, webhook_url=args.webhook_url).build_beacon_payload(
+            content=payload_text,
+            kind=kind,
+            agent_id=agent_id,
+            rtc_tip=args.rtc,
+            signature_preview=sig_preview,
+            username=(args.username or None),
+            avatar_url=(args.avatar_url or None),
+        )
         print(json.dumps({
             "kind": kind,
             "text": message_text,
@@ -1130,6 +1150,7 @@ def cmd_discord_ping(args: argparse.Namespace) -> int:
             "link": links,
             "webhook_url": args.webhook_url or _cfg_get(cfg, "discord", "webhook_url", default=""),
             "payload_text": payload_text,
+            "payload": preview,
             "signed": identity is not None,
         }, indent=2))
         return 0
@@ -1194,6 +1215,15 @@ def cmd_discord_send(args: argparse.Namespace) -> int:
     sig_preview = env_obj.get("sig", "")
 
     if args.dry_run:
+        preview = _discord_client(cfg, webhook_url=args.webhook_url).build_beacon_payload(
+            content=payload_text,
+            kind=kind,
+            agent_id=agent_id,
+            rtc_tip=args.rtc,
+            signature_preview=sig_preview,
+            username=(args.username or None),
+            avatar_url=(args.avatar_url or None),
+        )
         print(json.dumps({
             "kind": kind,
             "text": text,
@@ -1203,6 +1233,7 @@ def cmd_discord_send(args: argparse.Namespace) -> int:
             "link": links,
             "webhook_url": args.webhook_url or _cfg_get(cfg, "discord", "webhook_url", default=""),
             "payload_text": payload_text,
+            "payload": preview,
             "signed": identity is not None,
         }, indent=2))
         return 0
@@ -1241,6 +1272,47 @@ def cmd_discord_send(args: argparse.Namespace) -> int:
 
 
 # ── RustChain ──
+
+def cmd_discord_listen(args: argparse.Namespace) -> int:
+    cfg = load_config()
+    channel_id = args.channel_id or _cfg_get(cfg, "discord", "channel_id", default="")
+    bot_token = args.bot_token or _cfg_get(cfg, "discord", "bot_token", default="")
+
+    if args.dry_run:
+        print(
+            json.dumps(
+                {
+                    "channel_id": channel_id,
+                    "limit": args.limit,
+                    "after_id": args.after_id,
+                    "bot_token_set": bool(bot_token),
+                },
+                indent=2,
+            )
+        )
+        return 0
+
+    try:
+        client = _discord_client(cfg, bot_token=bot_token, channel_id=channel_id)
+        result = client.listen_messages(limit=args.limit, after_id=args.after_id)
+    except Exception as e:
+        print(json.dumps({"error": str(e)}), file=sys.stderr)
+        return 1
+
+    now = int(time.time())
+    for msg in result.get("messages", []):
+        append_jsonl(
+            "inbox.jsonl",
+            {
+                "platform": "discord",
+                "action": "listen",
+                "message": msg,
+                "ts": now,
+            },
+        )
+    print(json.dumps(result, indent=2))
+    return 0
+
 
 def cmd_rustchain_wallet_new(args: argparse.Namespace) -> int:
     use_mnemonic = getattr(args, "mnemonic", False)
@@ -4690,6 +4762,14 @@ def main(argv: Optional[List[str]] = None) -> None:
     sp.add_argument("--dry-run", action="store_true")
     sp.add_argument("--password", default=None, help="Password for encrypted identity")
     sp.set_defaults(func=cmd_discord_send)
+
+    sp = dc_sub.add_parser("listen", help="Read Discord channel messages (bot token mode)")
+    sp.add_argument("--channel-id", default=None, help="Discord channel ID (or config discord.channel_id)")
+    sp.add_argument("--bot-token", default=None, help="Discord bot token (or config discord.bot_token)")
+    sp.add_argument("--limit", type=int, default=20, help="Messages to fetch (1-100)")
+    sp.add_argument("--after-id", default=None, help="Only fetch messages newer than this snowflake ID")
+    sp.add_argument("--dry-run", action="store_true")
+    sp.set_defaults(func=cmd_discord_listen)
 
 
     # Dashboard
