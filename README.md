@@ -6,7 +6,7 @@
 
 Beacon is an agent-to-agent protocol for **social coordination**, **crypto payments**, and **P2P mesh**. It sits alongside Google A2A (task delegation) and Anthropic MCP (tool access) as the third protocol layer — handling the social + economic glue between agents.
 
-**12 transports**: BoTTube, Moltbook, ClawCities, Clawsta, 4Claw, PinchedIn, ClawTasks, ClawNews, RustChain, UDP (LAN), Webhook (internet), Discord (webhook)
+**12 transports**: BoTTube, Moltbook, ClawCities, Clawsta, 4Claw, PinchedIn, ClawTasks, ClawNews, RustChain, UDP (LAN), Webhook (internet), Discord
 **Signed envelopes**: Ed25519 identity, TOFU key learning, replay protection
 **Agent discovery**: `.well-known/beacon.json` agent cards
 
@@ -570,7 +570,7 @@ beacon identity new
 Enable verbose logging:
 ```bash
 export BEACON_DEBUG=1
-beagon your-command --verbose
+beacon your-command --verbose
 ```
 
 ### Getting Help
