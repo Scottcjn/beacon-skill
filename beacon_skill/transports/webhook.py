@@ -92,18 +92,19 @@ class WebhookHandler(BaseHTTPRequestHandler):
             accepted_env = False
             reason = "ok"
 
-            # Invariant: invalid signature must be rejected.
-            if verified is False:
-                reason = "signature_invalid"
-            else:
-                # For signed envelopes, enforce freshness + replay protection.
-                if signed:
+            if signed:
+                # Signed envelopes must be verifiable before any nonce/time checks.
+                if verified is False:
+                    reason = "signature_invalid"
+                elif verified is None:
+                    reason = "signature_unverifiable"
+                else:
                     ok, reason = check_envelope_window(env)
                     accepted_env = ok
-                else:
-                    # Legacy unsigned envelopes are still accepted for backward compatibility.
-                    accepted_env = True
-                    reason = "legacy_unsigned"
+            else:
+                # Legacy unsigned envelopes are still accepted for backward compatibility.
+                accepted_env = True
+                reason = "legacy_unsigned"
 
             if accepted_env:
                 record = {
@@ -167,6 +168,8 @@ class WebhookServer:
     def stop(self) -> None:
         if self._server:
             self._server.shutdown()
+            self._server.server_close()
+            self._server = None
 
 
 def webhook_send(
