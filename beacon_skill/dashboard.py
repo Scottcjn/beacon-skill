@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+import csv
+import json
 import time
 from collections import Counter
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+import requests
 
 from .codec import encode_envelope
 from .config import load_config
@@ -11,6 +16,8 @@ from .identity import AgentIdentity
 from .inbox import read_inbox
 from .storage import append_jsonl
 from .transports.udp import udp_send
+
+DEFAULT_API_BASE_URL = "http://50.28.86.131:8071"
 
 
 def _format_ts(ts: Optional[float]) -> str:
@@ -58,6 +65,136 @@ def _transport_tag(entry: Dict[str, Any]) -> str:
     return p
 
 
+def _entry_to_row(entry: Dict[str, Any]) -> Dict[str, Any]:
+    rts = float(entry.get("received_at") or 0.0)
+    env = entry.get("envelope") or {}
+    kind = str(env.get("kind") or "raw")
+    transport = _transport_tag(entry)
+    agent = str(env.get("agent_id") or entry.get("from") or "")
+    msg = _as_text(entry)
+    rtc = _rtc_tip(entry)
+    return {
+        "time": _format_ts(rts),
+        "transport": transport.upper(),
+        "agent": _short_agent(agent),
+        "kind": kind,
+        "message": msg,
+        "rtc": f"{rtc:g}" if rtc is not None else "-",
+        "rtc_value": rtc,
+        "received_at": rts,
+    }
+
+
+def _row_matches_query(row: Dict[str, Any], query: str) -> bool:
+    q = (query or "").strip().lower()
+    if not q:
+        return True
+    hay = " ".join(
+        [
+            str(row.get("transport", "")),
+            str(row.get("agent", "")),
+            str(row.get("kind", "")),
+            str(row.get("message", "")),
+        ]
+    ).lower()
+    return q in hay
+
+
+def parse_dashboard_input(raw: str) -> Dict[str, Any]:
+    text = (raw or "").strip()
+    if not text:
+        return {"action": "empty"}
+    if not text.startswith("/"):
+        return {"action": "send", "text": text}
+
+    cmdline = text[1:]
+    head, sep, tail = cmdline.partition(" ")
+    cmd = head.strip().lower()
+    rest = tail.strip() if sep else ""
+
+    if cmd in {"filter", "search"}:
+        return {"action": "filter", "query": rest}
+    if cmd in {"clear", "clearfilter"}:
+        return {"action": "filter", "query": ""}
+    if cmd == "export":
+        f_head, f_sep, f_tail = rest.partition(" ")
+        fmt = (f_head or "").strip().lower()
+        path = (f_tail or "").strip() if f_sep else ""
+        if fmt in {"json", "csv"}:
+            return {"action": "export", "format": fmt, "path": path or None}
+    if cmd in {"help", "?"}:
+        return {"action": "help"}
+    return {"action": "send", "text": text}
+
+
+def _normalize_api_rows(data: Any) -> List[Dict[str, Any]]:
+    if isinstance(data, list):
+        return [d for d in data if isinstance(d, dict)]
+    if isinstance(data, dict):
+        for key in ("items", "data", "results", "agents", "contracts", "reputation"):
+            v = data.get(key)
+            if isinstance(v, list):
+                return [d for d in v if isinstance(d, dict)]
+    return []
+
+
+def fetch_beacon_snapshot(
+    api_base_url: str = DEFAULT_API_BASE_URL,
+    *,
+    timeout_s: float = 8.0,
+    session: Optional[requests.Session] = None,
+) -> Dict[str, Any]:
+    http = session or requests.Session()
+    base = (api_base_url or DEFAULT_API_BASE_URL).rstrip("/")
+    endpoints = {
+        "agents": f"{base}/api/agents",
+        "contracts": f"{base}/api/contracts",
+        "reputation": f"{base}/api/reputation",
+    }
+    out: Dict[str, Any] = {"ok": True, "errors": [], "fetched_at": int(time.time())}
+    for name, url in endpoints.items():
+        try:
+            resp = http.request("GET", url, timeout=timeout_s)
+            if int(resp.status_code) >= 400:
+                out["ok"] = False
+                out["errors"].append(f"{name}: HTTP {resp.status_code}")
+                out[name] = []
+                continue
+            try:
+                payload = resp.json()
+            except Exception:
+                payload = {}
+            out[name] = _normalize_api_rows(payload)
+        except Exception as e:
+            out["ok"] = False
+            out["errors"].append(f"{name}: {e}")
+            out[name] = []
+    out["agents_count"] = len(out.get("agents", []))
+    out["contracts_count"] = len(out.get("contracts", []))
+    out["reputation_count"] = len(out.get("reputation", []))
+    return out
+
+
+def export_dashboard_rows(rows: List[Dict[str, Any]], fmt: str, path: Optional[str] = None) -> str:
+    ts = datetime.now(tz=timezone.utc).strftime("%Y%m%d-%H%M%S")
+    ext = "json" if fmt == "json" else "csv"
+    target = Path(path) if path else Path(f"beacon-dashboard-snapshot-{ts}.{ext}")
+    target.parent.mkdir(parents=True, exist_ok=True)
+
+    if fmt == "json":
+        payload = {"count": len(rows), "rows": rows, "exported_at": int(time.time())}
+        target.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        return str(target)
+
+    fields = ["time", "transport", "agent", "kind", "message", "rtc", "received_at"]
+    with target.open("w", encoding="utf-8", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fields)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({k: row.get(k, "") for k in fields})
+    return str(target)
+
+
 def _send_quick_ping(raw: str) -> Dict[str, Any]:
     cfg = load_config()
     txt = (raw or "").strip()
@@ -89,7 +226,6 @@ def _send_quick_ping(raw: str) -> Dict[str, Any]:
     except Exception:
         payload_text = encode_envelope(payload, version=1)
 
-    # Best effort: emit over UDP only if configured.
     udp_cfg = cfg.get("udp") or {}
     sent_udp = False
     if bool(udp_cfg.get("enabled")):
@@ -101,7 +237,6 @@ def _send_quick_ping(raw: str) -> Dict[str, Any]:
             ttl_int = int(ttl) if ttl is not None else None
         except Exception:
             ttl_int = None
-
         try:
             udp_send(host, port, payload_text.encode("utf-8", errors="replace"), broadcast=broadcast, ttl=ttl_int)
             sent_udp = True
@@ -120,19 +255,23 @@ def _send_quick_ping(raw: str) -> Dict[str, Any]:
             "ts": int(time.time()),
         },
     )
-
     return {"ok": True, "kind": kind, "signed": signed, "sent_udp": sent_udp}
 
 
-def run_dashboard(poll_interval: float = 1.0, sound: bool = False) -> int:
+def run_dashboard(
+    poll_interval: float = 1.0,
+    sound: bool = False,
+    *,
+    api_base_url: str = DEFAULT_API_BASE_URL,
+    api_poll_interval: float = 15.0,
+    initial_filter: str = "",
+) -> int:
     try:
         from textual.app import App, ComposeResult
-        from textual.containers import Horizontal, Vertical
+        from textual.containers import Horizontal
         from textual.widgets import DataTable, Footer, Header, Input, Static, TabbedContent, TabPane
     except Exception as e:  # pragma: no cover
-        raise RuntimeError(
-            "textual is required for dashboard. Install with: pip install textual"
-        ) from e
+        raise RuntimeError("textual is required for dashboard. Install with: pip install textual") from e
 
     class BeaconDashboard(App):
         CSS = """
@@ -144,7 +283,7 @@ def run_dashboard(poll_interval: float = 1.0, sound: bool = False) -> int:
             height: 1fr;
         }
         #sidebar {
-            width: 34;
+            width: 38;
             border: solid #1f6f1f;
             padding: 1;
             background: #050505;
@@ -176,6 +315,18 @@ def run_dashboard(poll_interval: float = 1.0, sound: bool = False) -> int:
             self._count_today = 0
             self._transport_counter: Counter[str] = Counter()
             self._agent_counter: Counter[str] = Counter()
+            self._history_rows: List[Dict[str, Any]] = []
+            self._visible_rows: List[Dict[str, Any]] = []
+            self._filter_query = (initial_filter or "").strip().lower()
+            self._api_state: Dict[str, Any] = {
+                "ok": False,
+                "agents_count": 0,
+                "contracts_count": 0,
+                "reputation_count": 0,
+                "errors": ["not fetched yet"],
+                "fetched_at": None,
+            }
+            self._http = requests.Session()
 
         def compose(self) -> ComposeResult:
             yield Header(show_clock=True)
@@ -194,7 +345,10 @@ def run_dashboard(poll_interval: float = 1.0, sound: bool = False) -> int:
                         yield DataTable(id="tbl-drama")
                     with TabPane("Bounties", id="tab-bounty"):
                         yield DataTable(id="tbl-bounty")
-            yield Input(placeholder="Send ping: type message or /kind message and press Enter", id="quick-send")
+            yield Input(
+                placeholder="Send ping or commands: /filter text | /export json [path] | /export csv [path]",
+                id="quick-send",
+            )
             yield Footer()
 
         def on_mount(self) -> None:
@@ -210,9 +364,10 @@ def run_dashboard(poll_interval: float = 1.0, sound: bool = False) -> int:
                 table.add_columns("Time", "Transport", "Agent", "Kind", "Message", "RTC")
                 table.zebra_stripes = True
             self.set_interval(max(0.25, float(poll_interval)), self._poll_inbox)
+            self.set_interval(max(2.0, float(api_poll_interval)), self._poll_api)
             self.set_interval(1.0, self._refresh_sidebar)
             self.title = "Beacon Dashboard"
-            self.sub_title = "Live transport activity"
+            self.sub_title = "Live transport activity + Beacon API snapshot"
 
         def _route_table_id(self, transport: str, kind: str) -> str:
             t = (transport or "").lower()
@@ -232,7 +387,6 @@ def run_dashboard(poll_interval: float = 1.0, sound: bool = False) -> int:
         def _add_row(self, table_id: str, row: tuple[str, str, str, str, str, str]) -> None:
             table = self.query_one(f"#{table_id}", DataTable)
             table.add_row(*row)
-            # Keep memory bounded.
             if table.row_count > 400:
                 try:
                     first_key = next(iter(table.rows.keys()))
@@ -240,51 +394,88 @@ def run_dashboard(poll_interval: float = 1.0, sound: bool = False) -> int:
                 except Exception:
                     pass
 
+        def _clear_rows(self) -> None:
+            for tid in (
+                "tbl-all",
+                "tbl-bottube",
+                "tbl-discord",
+                "tbl-rustchain",
+                "tbl-drama",
+                "tbl-bounty",
+            ):
+                table = self.query_one(f"#{tid}", DataTable)
+                try:
+                    keys = list(table.rows.keys())
+                    for key in keys:
+                        table.remove_row(key)
+                except Exception:
+                    continue
+
+        def _display_row(self, row: Dict[str, Any]) -> None:
+            row_t = (
+                str(row.get("time", "")),
+                str(row.get("transport", "")),
+                str(row.get("agent", "")),
+                str(row.get("kind", "")),
+                str(row.get("message", "")),
+                str(row.get("rtc", "")),
+            )
+            self._add_row("tbl-all", row_t)
+            specific = self._route_table_id(str(row.get("transport", "")).lower(), str(row.get("kind", "")))
+            if specific != "tbl-all":
+                self._add_row(specific, row_t)
+            self._visible_rows.append(row)
+            if len(self._visible_rows) > 2000:
+                self._visible_rows = self._visible_rows[-2000:]
+
+        def _rebuild_filtered_view(self) -> None:
+            self._clear_rows()
+            self._visible_rows = []
+            for row in self._history_rows:
+                if _row_matches_query(row, self._filter_query):
+                    self._display_row(row)
+
         def _poll_inbox(self) -> None:
             entries = read_inbox(since=self._last_ts, limit=500)
             if not entries:
                 return
-
-            for e in entries:
-                rts = float(e.get("received_at") or 0.0)
+            for entry in entries:
+                rts = float(entry.get("received_at") or 0.0)
                 if rts > self._last_ts:
                     self._last_ts = rts
 
-                env = e.get("envelope") or {}
-                kind = str(env.get("kind") or "raw")
-                transport = _transport_tag(e)
-                agent = str(env.get("agent_id") or e.get("from") or "")
-                msg = _as_text(e)
-                rtc = _rtc_tip(e)
+                row = _entry_to_row(entry)
+                self._history_rows.append(row)
+                if len(self._history_rows) > 5000:
+                    self._history_rows = self._history_rows[-5000:]
 
-                row = (
-                    _format_ts(rts),
-                    transport.upper(),
-                    _short_agent(agent),
-                    kind,
-                    msg,
-                    f"{rtc:g}" if rtc is not None else "-",
-                )
-
-                self._add_row("tbl-all", row)
-                specific = self._route_table_id(transport, kind)
-                if specific != "tbl-all":
-                    self._add_row(specific, row)
-
+                transport = str(row.get("transport", "")).lower()
                 self._count_today += 1
                 self._transport_counter[transport] += 1
-                self._agent_counter[_short_agent(agent)] += 1
+                self._agent_counter[str(row.get("agent", "unknown"))] += 1
 
-                high_value = rtc is not None and rtc >= 5
-                mayday = kind.lower() == "mayday"
+                if _row_matches_query(row, self._filter_query):
+                    self._display_row(row)
+
+                rtc = row.get("rtc_value")
+                kind = str(row.get("kind") or "").lower()
+                high_value = isinstance(rtc, float) and rtc >= 5
+                mayday = kind == "mayday"
                 if high_value or mayday:
-                    self.notify(
-                        f"{kind.upper()} from {_short_agent(agent)} ({rtc:g} RTC)" if rtc is not None else f"{kind.upper()} from {_short_agent(agent)}",
-                        severity="warning",
-                        timeout=4,
-                    )
+                    label = str(row.get("agent", "unknown"))
+                    if rtc is not None:
+                        self.notify(f"{kind.upper()} from {label} ({rtc:g} RTC)", severity="warning", timeout=4)
+                    else:
+                        self.notify(f"{kind.upper()} from {label}", severity="warning", timeout=4)
                     if sound:
                         print("\a", end="", flush=True)
+
+        def _poll_api(self) -> None:
+            self._api_state = fetch_beacon_snapshot(
+                api_base_url=api_base_url,
+                timeout_s=8.0,
+                session=self._http,
+            )
 
         def _refresh_sidebar(self) -> None:
             top_agents = self._agent_counter.most_common(5)
@@ -292,12 +483,37 @@ def run_dashboard(poll_interval: float = 1.0, sound: bool = False) -> int:
                 "[b]Beacon Network[/b]",
                 "",
                 f"Pings today: {self._count_today}",
+                f"Visible rows: {len(self._visible_rows)}",
+                f"Filter: {self._filter_query or '(none)'}",
                 "",
-                "Transports:",
+                "Beacon API:",
+                f"- base: {api_base_url}",
+                f"- status: {'OK' if self._api_state.get('ok') else 'degraded'}",
+                f"- agents: {self._api_state.get('agents_count', 0)}",
+                f"- contracts: {self._api_state.get('contracts_count', 0)}",
+                f"- reputation: {self._api_state.get('reputation_count', 0)}",
             ]
-            for t in ["udp", "webhook", "discord", "bottube", "rustchain", "moltbook", "clawcities", "clawsta", "fourclaw", "pinchedin", "clawtasks", "clawnews"]:
+            if self._api_state.get("errors"):
+                lines.append(f"- last_error: {self._api_state['errors'][0]}")
+
+            lines.append("")
+            lines.append("Transports:")
+            for t in [
+                "udp",
+                "webhook",
+                "discord",
+                "bottube",
+                "rustchain",
+                "moltbook",
+                "clawcities",
+                "clawsta",
+                "fourclaw",
+                "pinchedin",
+                "clawtasks",
+                "clawnews",
+            ]:
                 n = self._transport_counter.get(t, 0)
-                marker = "[green]●[/green]" if n > 0 else "[red]●[/red]"
+                marker = "[green]*[/green]" if n > 0 else "[red]*[/red]"
                 lines.append(f"{marker} {t}: {n}")
 
             lines.append("")
@@ -307,18 +523,38 @@ def run_dashboard(poll_interval: float = 1.0, sound: bool = False) -> int:
                     lines.append(f"- {agent}: {n}")
             else:
                 lines.append("- none yet")
-
             self.query_one("#sidebar", Static).update("\n".join(lines))
 
         def on_input_submitted(self, event: Input.Submitted) -> None:
-            raw = event.value.strip()
-            if not raw:
+            parsed = parse_dashboard_input(event.value)
+            action = parsed.get("action")
+
+            if action == "empty":
                 return
-            outcome = _send_quick_ping(raw)
-            if outcome.get("ok"):
-                self.notify(f"Sent quick ping ({outcome.get('kind')})", severity="information", timeout=2)
-            else:
-                self.notify(f"Send failed: {outcome.get('error', 'unknown')}", severity="error", timeout=3)
+
+            if action == "send":
+                outcome = _send_quick_ping(str(parsed.get("text") or ""))
+                if outcome.get("ok"):
+                    self.notify(f"Sent quick ping ({outcome.get('kind')})", severity="information", timeout=2)
+                else:
+                    self.notify(f"Send failed: {outcome.get('error', 'unknown')}", severity="error", timeout=3)
+
+            elif action == "filter":
+                self._filter_query = str(parsed.get("query") or "").strip().lower()
+                self._rebuild_filtered_view()
+                self.notify(f"Filter set: {self._filter_query or '(none)'}", severity="information", timeout=3)
+
+            elif action == "export":
+                fmt = str(parsed.get("format") or "")
+                try:
+                    out_path = export_dashboard_rows(self._visible_rows, fmt, path=parsed.get("path"))
+                    self.notify(f"Exported {len(self._visible_rows)} rows -> {out_path}", severity="information", timeout=4)
+                except Exception as e:
+                    self.notify(f"Export failed: {e}", severity="error", timeout=4)
+
+            elif action == "help":
+                self.notify("Commands: /filter text | /clear | /export json [path] | /export csv [path]", severity="information", timeout=5)
+
             event.input.value = ""
 
     BeaconDashboard().run()

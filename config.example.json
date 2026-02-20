@@ -45,6 +45,10 @@
     "avatar_url": "",
     "timeout_s": 20
   },
+  "dashboard": {
+    "api_base_url": "http://50.28.86.131:8071",
+    "api_poll_interval_s": 15.0
+  },
   "udp": {
     "enabled": false,
     "host": "255.255.255.255",

@@ -319,6 +319,10 @@ def cmd_init(args: argparse.Namespace) -> int:
             "avatar_url": "",
             "timeout_s": 20,
         },
+        "dashboard": {
+            "api_base_url": "http://50.28.86.131:8071",
+            "api_poll_interval_s": 15.0,
+        },
         "udp": {
             "enabled": "udp" in enabled_transports,
             "host": "255.255.255.255",
@@ -4327,7 +4331,27 @@ def cmd_dashboard(args: argparse.Namespace) -> int:
         print(json.dumps({"error": str(e)}), file=sys.stderr)
         return 1
 
-    return int(run_dashboard(poll_interval=float(args.interval), sound=bool(args.sound)) or 0)
+    cfg = load_config()
+    api_base_url = getattr(args, "api_base_url", None) or _cfg_get(
+        cfg, "dashboard", "api_base_url", default="http://50.28.86.131:8071"
+    )
+    api_poll_interval = float(
+        getattr(args, "api_poll_interval", None)
+        or _cfg_get(cfg, "dashboard", "api_poll_interval_s", default=15.0)
+        or 15.0
+    )
+    initial_filter = getattr(args, "filter", "") or ""
+
+    return int(
+        run_dashboard(
+            poll_interval=float(args.interval),
+            sound=bool(args.sound),
+            api_base_url=str(api_base_url),
+            api_poll_interval=api_poll_interval,
+            initial_filter=str(initial_filter),
+        )
+        or 0
+    )
 
 
 # ── Argument parser ──
@@ -4696,6 +4720,9 @@ def main(argv: Optional[List[str]] = None) -> None:
     sp = sub.add_parser("dashboard", help="Launch live Beacon TUI dashboard")
     sp.add_argument("--interval", type=float, default=1.0, help="Inbox poll interval seconds (default 1.0)")
     sp.add_argument("--sound", action="store_true", help="Terminal bell for mayday/high-value tips")
+    sp.add_argument("--api-base-url", default=None, help="Beacon API base URL (default from config dashboard.api_base_url)")
+    sp.add_argument("--api-poll-interval", type=float, default=15.0, help="Beacon API poll interval seconds")
+    sp.add_argument("--filter", default="", help="Initial filter/search query")
     sp.set_defaults(func=cmd_dashboard)
 
 

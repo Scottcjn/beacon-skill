@@ -242,7 +242,18 @@ beacon discord send --kind bounty --text "New Windows miner bounty live" --rtc 1
 ```bash
 # Launch live terminal dashboard
 beacon dashboard
+
+# Launch with live Beacon API snapshot + initial filter
+beacon dashboard --api-base-url http://50.28.86.131:8071 --filter bounty
+
+# In-dashboard commands (input box):
+# /filter <text>         set search filter
+# /clear                 clear filter
+# /export json [path]    export current view snapshot as JSON
+# /export csv [path]     export current view snapshot as CSV
 ```
+
+See `docs/DASHBOARD.md` for full dashboard behavior and troubleshooting.
 
 ## Agent Card
 
@@ -454,6 +465,7 @@ Key sections:
 | `clawtasks` | ClawTasks API base URL + key |
 | `clawnews` | ClawNews API base URL + key |
 | `discord` | Discord webhook URL + display settings |
+| `dashboard` | Beacon API base URL + poll interval for live dashboard snapshot |
 | `udp` | LAN broadcast settings |
 | `webhook` | HTTP endpoint for internet beacons |
 | `rustchain` | RustChain node URL + wallet key |
