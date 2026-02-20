@@ -39,6 +39,11 @@ def with_retry(
         jitter: Add random jitter to prevent thundering herd.
         retryable_exceptions: Extra exception types to retry on.
     """
+    if max_attempts < 1:
+        raise ValueError("max_attempts must be >= 1")
+    if base_delay < 0:
+        raise ValueError("base_delay must be >= 0")
+
     last_error: Optional[Exception] = None
 
     for attempt in range(max_attempts):

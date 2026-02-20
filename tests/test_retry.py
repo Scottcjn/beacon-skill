@@ -31,6 +31,14 @@ class TestRetry(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             with_retry(always_fail, max_attempts=2, base_delay=0.01)
 
+    def test_invalid_max_attempts_raises_value_error(self) -> None:
+        with self.assertRaises(ValueError):
+            with_retry(lambda: "ok", max_attempts=0)
+
+    def test_invalid_base_delay_raises_value_error(self) -> None:
+        with self.assertRaises(ValueError):
+            with_retry(lambda: "ok", base_delay=-0.1)
+
 
 if __name__ == "__main__":
     unittest.main()
