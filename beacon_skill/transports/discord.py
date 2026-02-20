@@ -164,6 +164,10 @@ class DiscordTransport:
                 # Don't retry 4xx client errors (except 429)
                 raise
 
+        if isinstance(last_error, DiscordRateLimitError):
+            raise last_error
+        if isinstance(last_error, (DiscordServerError, requests.RequestException)):
+            raise DiscordError(f"Failed after {self.max_retries} attempts: {last_error}") from last_error
         raise DiscordError(f"Failed after {self.max_retries} attempts: {last_error}")
 
     def send_message(
