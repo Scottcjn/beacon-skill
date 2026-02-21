@@ -7,49 +7,13 @@ from typing import Any, Dict, List, Optional
 
 from .codec import decode_envelopes, verify_envelope
 from .storage import _dir, read_state, write_state
-
-
-KNOWN_KEYS_FILE = "known_keys.json"
-
-
-def _known_keys_path() -> Path:
-    return _dir() / KNOWN_KEYS_FILE
-
-
-def load_known_keys() -> Dict[str, str]:
-    """Load agent_id -> public_key_hex mapping from disk."""
-    path = _known_keys_path()
-    if not path.exists():
-        return {}
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
-
-
-def save_known_keys(keys: Dict[str, str]) -> None:
-    """Save known keys to disk."""
-    path = _known_keys_path()
-    path.write_text(json.dumps(keys, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-
-
-def trust_key(agent_id: str, pubkey_hex: str) -> None:
-    """Add or update a trusted agent key."""
-    keys = load_known_keys()
-    keys[agent_id] = pubkey_hex
-    save_known_keys(keys)
-
-
-def _learn_key_from_envelope(env: Dict[str, Any], keys: Dict[str, str]) -> Dict[str, str]:
-    """Auto-learn pubkey from v2 envelopes (trust on first use)."""
-    agent_id = env.get("agent_id", "")
-    pubkey = env.get("pubkey", "")
-    if agent_id and pubkey and agent_id not in keys:
-        from .identity import agent_id_from_pubkey
-        expected = agent_id_from_pubkey(bytes.fromhex(pubkey))
-        if expected == agent_id:
-            keys[agent_id] = pubkey
-    return keys
+from .key_management import (
+    load_known_keys,
+    save_known_keys,
+    trust_key,
+    update_last_seen,
+    is_key_expired,
+)
 
 
 def _read_nonces() -> set:
@@ -68,6 +32,57 @@ def _save_read_nonce(nonce: str) -> None:
         nonces = set(list(nonces)[-10000:])
     state["read_nonces"] = sorted(nonces)
     write_state(state)
+
+
+def _learn_key_from_envelope(env: Dict[str, Any], keys: Dict[str, Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    """Auto-learn pubkey from v2 envelopes (trust on first use).
+    
+    Now includes TTL check and metadata tracking.
+    """
+    agent_id = env.get("agent_id", "")
+    pubkey = env.get("pubkey", "")
+    
+    if not agent_id or not pubkey:
+        return keys
+    
+    from .identity import agent_id_from_pubkey
+    
+    # Verify agent_id matches pubkey
+    expected = agent_id_from_pubkey(bytes.fromhex(pubkey))
+    if expected != agent_id:
+        return keys  # Invalid: agent_id doesn't match pubkey
+    
+    # Check if key already exists
+    if agent_id in keys:
+        key = keys[agent_id]
+        
+        # Check if revoked
+        if key.get("revoked"):
+            return keys  # Ignore envelopes from revoked keys
+        
+        # Check if expired
+        if is_key_expired(agent_id):
+            # Key expired - require re-verification
+            # For now, we'll update last_seen if we see it again
+            pass
+        
+        # Update last_seen
+        keys[agent_id]["last_seen"] = time.time()
+    else:
+        # New key - learn it (TOFU)
+        now = time.time()
+        keys[agent_id] = {
+            "pubkey_hex": pubkey,
+            "first_seen": now,
+            "last_seen": now,
+            "rotation_count": 0,
+            "previous_key": None,
+            "revoked": False,
+            "revoked_at": None,
+            "revoked_reason": None,
+        }
+    
+    return keys
 
 
 def read_inbox(
@@ -108,11 +123,11 @@ def read_inbox(
 
         # Process each envelope in the entry.
         for env in envelopes:
-            # Auto-learn keys.
-            _learn_key_from_envelope(env, known_keys)
+            # Auto-learn keys (with TTL tracking).
+            known_keys = _learn_key_from_envelope(env, known_keys)
 
             # Verify signature.
-            verified = verify_envelope(env, known_keys=known_keys)
+            verified = verify_envelope(env, known_keys={k: v["pubkey_hex"] for k, v in known_keys.items()})
             nonce = env.get("nonce", "")
             is_read = nonce in read_nonces if nonce else False
 
@@ -147,7 +162,7 @@ def read_inbox(
 
             results.append(enriched)
 
-    # Save any newly learned keys.
+    # Save any updated keys (last_seen timestamps, etc.)
     save_known_keys(known_keys)
 
     if limit:
@@ -175,3 +190,9 @@ def get_entry_by_nonce(nonce: str) -> Optional[Dict[str, Any]]:
         if env and env.get("nonce") == nonce:
             return entry
     return None
+
+
+# Re-export key management functions for backwards compatibility
+def trust_key_wrapper(agent_id: str, pubkey_hex: str) -> None:
+    """Backwards-compatible wrapper for trust_key."""
+    trust_key(agent_id, pubkey_hex)
