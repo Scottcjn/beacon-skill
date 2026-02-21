@@ -4313,6 +4313,119 @@ def cmd_hybrid_stats(args: argparse.Namespace) -> int:
     return 0
 
 
+
+
+# ── Key Management (TOFU revocation/rotation) ──
+
+def cmd_keys_list(args: argparse.Namespace) -> int:
+    """List all known keys with metadata."""
+    from .key_management import list_keys
+    keys = list_keys(include_revoked=args.revoked, include_expired=not args.active_only)
+
+    if not keys:
+        print("No known keys found.")
+        return 0
+
+    print(f"{'Agent ID':<20} {'Revoked':<8} {'Expired':<8} {'Rotations':<10} {'Age (days)':<12}")
+    print("-" * 70)
+
+    for key in keys:
+        revoked = "YES" if key.get("is_revoked") else "no"
+        expired = "YES" if key.get("is_expired") else "no"
+        rotations = key.get("rotation_count", 0)
+        age = key.get("age_days", 0)
+        print(f"{key['agent_id']:<20} {revoked:<8} {expired:<8} {rotations:<10} {age:<12}")
+
+    print(f"\nTotal: {len(keys)} keys")
+    return 0
+
+
+def cmd_keys_show(args: argparse.Namespace) -> int:
+    """Show detailed info about a key."""
+    from .key_management import get_key_info
+    info = get_key_info(args.agent_id)
+
+    if not info:
+        print(f"Key not found: {args.agent_id}")
+        return 1
+
+    print(f"Agent ID: {info['agent_id']}")
+    print(f"Public Key: {info['pubkey_hex']}")
+    print(f"First Seen: {info['first_seen']}")
+    print(f"Last Seen: {info['last_seen']}")
+    print(f"Rotation Count: {info['rotation_count']}")
+    print(f"Previous Key: {info.get('previous_key') or 'None'}")
+    print(f"Revoked: {'YES' if info['is_revoked'] else 'no'}")
+    if info.get('revoked_at'):
+        print(f"Revoked At: {info['revoked_at']}")
+        print(f"Revoked Reason: {info.get('revoked_reason')}")
+    print(f"Expired: {'YES' if info['is_expired'] else 'no'}")
+    print(f"Age (days): {info['age_days']}")
+
+    return 0
+
+
+def cmd_keys_revoke(args: argparse.Namespace) -> int:
+    """Revoke a key."""
+    from .key_management import revoke_key
+
+    success = revoke_key(args.agent_id, reason=args.reason)
+
+    if success:
+        print(f"Key revoked: {args.agent_id}")
+        if args.reason:
+            print(f"Reason: {args.reason}")
+        return 0
+    else:
+        print(f"Key not found: {args.agent_id}")
+        return 1
+
+
+def cmd_keys_rotate(args: argparse.Namespace) -> int:
+    """Rotate current identity key with signature."""
+    from .key_management import rotate_key
+    from .identity import AgentIdentity
+
+    try:
+        identity = AgentIdentity.load(password=args.password)
+    except FileNotFoundError:
+        print("No identity found. Run 'beacon identity new' first.")
+        return 1
+    except ValueError as e:
+        print(f"Error loading identity: {e}")
+        return 1
+
+    new_pubkey_hex = identity.public_key_hex
+    signature_hex = identity.sign_hex(bytes.fromhex(new_pubkey_hex))
+
+    success, message = rotate_key(
+        agent_id=identity.agent_id,
+        new_pubkey_hex=new_pubkey_hex,
+        signature_hex=signature_hex,
+    )
+
+    print(message)
+    return 0 if success else 1
+
+
+def cmd_keys_cleanup(args: argparse.Namespace) -> int:
+    """Clean up expired keys."""
+    from .key_management import cleanup_expired_keys
+
+    removed = cleanup_expired_keys(dry_run=args.dry_run)
+
+    if not removed:
+        print("No expired keys to clean up.")
+        return 0
+
+    print(f"{'Would remove' if args.dry_run else 'Removed'} {len(removed)} expired keys:")
+    for agent_id in removed:
+        print(f"  - {agent_id}")
+
+    return 0
+
+
+
 def cmd_anchor_submit(args: argparse.Namespace) -> int:
     mgr, _ = _build_anchor_mgr(args)
     if not mgr:
@@ -5655,6 +5768,33 @@ def main(argv: Optional[List[str]] = None) -> None:
     sp.set_defaults(func=cmd_hybrid_stats)
 
     # ── Agent Matrix (Lambda Lang transport) ──
+    # ── Key Management (TOFU revocation/rotation) ──
+    keys_p = sub.add_parser("keys", help="Manage known agent keys (TOFU)")
+    keys_sub = keys_p.add_subparsers(dest="keys_cmd", required=True)
+
+    sp = keys_sub.add_parser("list", help="List all known keys")
+    sp.add_argument("--revoked", action="store_true", help="Include revoked keys")
+    sp.add_argument("--active-only", action="store_true", help="Only show non-expired keys")
+    sp.set_defaults(func=cmd_keys_list)
+
+    sp = keys_sub.add_parser("show", help="Show details for a key")
+    sp.add_argument("agent_id", help="Agent ID to show")
+    sp.set_defaults(func=cmd_keys_show)
+
+    sp = keys_sub.add_parser("revoke", help="Revoke a key")
+    sp.add_argument("agent_id", help="Agent ID to revoke")
+    sp.add_argument("--reason", default=None, help="Reason for revocation")
+    sp.set_defaults(func=cmd_keys_revoke)
+
+    sp = keys_sub.add_parser("rotate", help="Rotate current identity key")
+    sp.add_argument("--password", default=None, help="Password for encrypted identity")
+    sp.set_defaults(func=cmd_keys_rotate)
+
+    sp = keys_sub.add_parser("cleanup", help="Remove expired keys")
+    sp.add_argument("--dry-run", action="store_true", help="Show what would be removed without removing")
+    sp.set_defaults(func=cmd_keys_cleanup)
+
+
     register_agentmatrix_parser(sub)
 
     args = p.parse_args(argv)
