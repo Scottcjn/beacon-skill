@@ -1,5 +1,7 @@
+import fcntl
 import json
 import time
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -8,6 +10,25 @@ def _dir() -> Path:
     d = Path.home() / ".beacon"
     d.mkdir(parents=True, exist_ok=True)
     return d
+
+
+@contextmanager
+def state_lock(write: bool = False):
+    """Context manager for advisory file locking on the state file."""
+    path = _dir() / "state.json.lock"
+    # Ensure lock file exists
+    if not path.exists():
+        path.touch()
+    
+    # We use a separate lock file to avoid issues with opening/closing the JSON file itself
+    with path.open("w") as f:
+        # LOCK_EX for write, LOCK_SH for read
+        mode = fcntl.LOCK_EX if write else fcntl.LOCK_SH
+        try:
+            fcntl.flock(f, mode)
+            yield
+        finally:
+            fcntl.flock(f, fcntl.LOCK_UN)
 
 
 def _safe_path(name: str) -> Path:

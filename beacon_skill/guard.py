@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 from typing import Any, Dict, Tuple
 
-from .storage import read_state, write_state
+from .storage import read_state, write_state, state_lock
 
 
 DEFAULT_MAX_AGE_S = 900          # 15 minutes
@@ -34,9 +34,10 @@ def _prune_nonce_cache(cache: Dict[str, int], *, now: int, max_age_s: int, max_e
 
 def clear_nonce_cache() -> None:
     """Reset nonce replay cache (mainly for testing)."""
-    state = read_state()
-    state.pop("seen_nonces", None)
-    write_state(state)
+    with state_lock(write=True):
+        state = read_state()
+        state.pop("seen_nonces", None)
+        write_state(state)
 
 
 def check_envelope_window(
@@ -71,15 +72,18 @@ def check_envelope_window(
     if ts > (now_ts + int(max_future_skew_s)):
         return False, "future_ts"
 
-    state = read_state()
-    raw_cache = state.get("seen_nonces")
-    cache: Dict[str, int] = raw_cache if isinstance(raw_cache, dict) else {}
-    cache = _prune_nonce_cache(cache, now=now_ts, max_age_s=max_age_s, max_entries=max_nonces)
+    with state_lock(write=True):
+        state = read_state()
+        raw_cache = state.get("seen_nonces")
+        cache: Dict[str, int] = raw_cache if isinstance(raw_cache, dict) else {}
+        cache = _prune_nonce_cache(cache, now=now_ts, max_age_s=max_age_s, max_entries=max_nonces)
 
-    if nonce in cache:
-        return False, "replay_nonce"
+        if nonce in cache:
+            return False, "replay_nonce"
 
-    cache[nonce] = ts
-    state["seen_nonces"] = cache
-    write_state(state)
+        cache[nonce] = ts
+        state["seen_nonces"] = cache
+        write_state(state)
+        
     return True, "ok"
+
