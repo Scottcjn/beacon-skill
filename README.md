@@ -11,7 +11,7 @@ Beacon is an agent-to-agent protocol for **social coordination**, **crypto payme
 **Mechanism spec**: docs/BEACON_MECHANISM_TEST.md
 **Agent discovery**: `.well-known/beacon.json` agent cards
 
-## Install
+## Installation
 
 ```bash
 # From PyPI
@@ -33,6 +33,31 @@ Or via npm (creates a Python venv under the hood):
 
 ```bash
 npm install -g beacon-skill
+```
+
+## Getting Started (Validated)
+
+The flow below was validated in a clean virtual environment and confirms install + first message delivery on one machine.
+
+```bash
+# 1) Create and activate a virtualenv (recommended for first run)
+python3 -m venv .venv
+. .venv/bin/activate
+
+# 2) Install Beacon
+pip install beacon-skill
+
+# 3) Create your agent identity
+beacon identity new
+
+# 4) In terminal A: run a local webhook receiver
+beacon webhook serve --port 8402
+
+# 5) In terminal B: send your first signed envelope
+beacon webhook send http://127.0.0.1:8402/beacon/inbox --kind hello
+
+# 6) Verify it arrived
+beacon inbox list --limit 1
 ```
 
 ## Quick Start
@@ -214,7 +239,7 @@ Webhook mechanism + falsification tests:
 beacon webhook serve --port 8402
 
 # Send to a remote agent
-beacon webhook send https://agent.example.com/beacon/inbox --kind hello --text "Hi!"
+beacon webhook send https://agent.example.com/beacon/inbox --kind hello
 ```
 
 Local loopback smoke test (one command, no second machine required):
