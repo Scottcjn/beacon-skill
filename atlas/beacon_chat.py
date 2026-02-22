@@ -14,6 +14,7 @@ import time
 import json
 import uuid
 import sqlite3
+from collections import OrderedDict
 import requests as http_requests
 from flask import Flask, request, jsonify, g
 
@@ -228,8 +229,84 @@ def init_db():
 init_db()
 
 # --- Rate limiting ---
-RATE_LIMIT = {}  # ip -> last_request_time
-RATE_LIMIT_SECONDS = 3  # min seconds between requests per IP
+READ_LIMIT_PER_MIN = int(os.getenv("ATLAS_READ_RATE_LIMIT", "30"))
+WRITE_LIMIT_PER_MIN = int(os.getenv("ATLAS_WRITE_RATE_LIMIT", "10"))
+RATE_LIMIT_WINDOW_SECONDS = 60
+RATE_LIMIT_TTL_SECONDS = int(os.getenv("ATLAS_RATE_LIMIT_TTL", "900"))
+RATE_LIMIT_MAX_ENTRIES = int(os.getenv("ATLAS_RATE_LIMIT_MAX_ENTRIES", "10000"))
+RATE_LIMIT_CLEANUP_INTERVAL_SECONDS = int(os.getenv("ATLAS_RATE_LIMIT_CLEANUP_INTERVAL", "30"))
+
+
+class BoundedRateLimiter:
+    """Per-key fixed-window rate limiter with bounded, TTL-cleaned storage."""
+
+    def __init__(self, *, max_entries=10000, ttl_seconds=900, cleanup_interval_seconds=30):
+        self.max_entries = max_entries
+        self.ttl_seconds = ttl_seconds
+        self.cleanup_interval_seconds = cleanup_interval_seconds
+        self._entries = OrderedDict()  # key -> {window_start, count, last_seen}
+        self._last_cleanup = 0.0
+
+    def _cleanup(self, now):
+        stale_before = now - self.ttl_seconds
+        stale_keys = [k for k, v in self._entries.items() if v["last_seen"] < stale_before]
+        for key in stale_keys:
+            self._entries.pop(key, None)
+
+        while len(self._entries) > self.max_entries:
+            self._entries.popitem(last=False)
+
+    def allow(self, key, limit, *, window_seconds=60, now=None):
+        now = time.time() if now is None else now
+        if now - self._last_cleanup >= self.cleanup_interval_seconds:
+            self._cleanup(now)
+            self._last_cleanup = now
+
+        record = self._entries.get(key)
+        if record is None:
+            self._entries[key] = {"window_start": now, "count": 1, "last_seen": now}
+            self._entries.move_to_end(key)
+            return True
+
+        if now - record["window_start"] >= window_seconds:
+            record["window_start"] = now
+            record["count"] = 1
+            record["last_seen"] = now
+            self._entries.move_to_end(key)
+            return True
+
+        if record["count"] >= limit:
+            record["last_seen"] = now
+            self._entries.move_to_end(key)
+            return False
+
+        record["count"] += 1
+        record["last_seen"] = now
+        self._entries.move_to_end(key)
+        return True
+
+
+ATLAS_RATE_LIMITER = BoundedRateLimiter(
+    max_entries=RATE_LIMIT_MAX_ENTRIES,
+    ttl_seconds=RATE_LIMIT_TTL_SECONDS,
+    cleanup_interval_seconds=RATE_LIMIT_CLEANUP_INTERVAL_SECONDS,
+)
+
+
+def _read_limit_per_min():
+    return int(app.config.get("RATE_LIMIT_READ_PER_MIN", READ_LIMIT_PER_MIN))
+
+
+def _write_limit_per_min():
+    return int(app.config.get("RATE_LIMIT_WRITE_PER_MIN", WRITE_LIMIT_PER_MIN))
+
+
+def enforce_rate_limit(bucket, limit, error_message="Rate limited. Try again shortly."):
+    ip = get_real_ip() or "unknown"
+    key = f"{bucket}:{ip}"
+    if not ATLAS_RATE_LIMITER.allow(key, limit, window_seconds=RATE_LIMIT_WINDOW_SECONDS):
+        return cors_json({"error": error_message}, 429)
+    return None
 
 # --- LLM Configuration ---
 OLLAMA_URL = "http://100.75.100.89:11434/api/chat"
@@ -404,12 +481,9 @@ def chat():
         resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
         return resp, 204
 
-    # Rate limit
-    ip = get_real_ip()
-    now = time.time()
-    if ip in RATE_LIMIT and (now - RATE_LIMIT[ip]) < RATE_LIMIT_SECONDS:
-        return cors_json({"error": "Rate limited. Wait a moment."}, 429)
-    RATE_LIMIT[ip] = now
+    rl = enforce_rate_limit("api_chat_write", _write_limit_per_min())
+    if rl:
+        return rl
 
     data = request.get_json(silent=True)
     if not data:
@@ -477,6 +551,10 @@ def list_contracts():
         resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
         return resp, 204
 
+    rl = enforce_rate_limit("api_contracts_read", _read_limit_per_min())
+    if rl:
+        return rl
+
     db = get_db()
     rows = db.execute("SELECT * FROM contracts ORDER BY created_at DESC").fetchall()
     contracts = []
@@ -493,12 +571,11 @@ def list_contracts():
 
 @app.route("/api/contracts", methods=["POST"])
 def create_contract():
-    ip = get_real_ip()
-    now = time.time()
-    if ip in RATE_LIMIT and (now - RATE_LIMIT[ip]) < RATE_LIMIT_SECONDS:
-        return cors_json({"error": "Rate limited. Wait a moment."}, 429)
-    RATE_LIMIT[ip] = now
+    rl = enforce_rate_limit("api_contracts_write", _write_limit_per_min())
+    if rl:
+        return rl
 
+    now = time.time()
     data = request.get_json(silent=True)
     if not data:
         return cors_json({"error": "Invalid JSON"}, 400)
@@ -572,6 +649,10 @@ def update_contract(contract_id):
         resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
         return resp, 204
 
+    rl = enforce_rate_limit("api_contracts_write_patch", _write_limit_per_min())
+    if rl:
+        return rl
+
     data = request.get_json(silent=True)
     if not data:
         return cors_json({"error": "Invalid JSON"}, 400)
@@ -594,9 +675,6 @@ def update_contract(contract_id):
 # ═══════════════════════════════════════════════════════════════════
 # BEP-2: External Agent Relay — Cross-Model Bridging
 # ═══════════════════════════════════════════════════════════════════
-
-RELAY_RATE_LIMIT = {}  # ip -> last_register_time
-
 
 @app.route("/relay/register", methods=["POST", "OPTIONS"])
 def relay_register():
@@ -621,12 +699,14 @@ def relay_register():
         resp.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
         return resp, 204
 
-    # Rate limit registration
-    ip = get_real_ip()
+    ip = get_real_ip() or "unknown"
     now = time.time()
-    if ip in RELAY_RATE_LIMIT and (now - RELAY_RATE_LIMIT[ip]) < RELAY_REGISTER_COOLDOWN_S:
+    if not ATLAS_RATE_LIMITER.allow(
+        f"relay_register:{ip}",
+        1,
+        window_seconds=RELAY_REGISTER_COOLDOWN_S,
+    ):
         return cors_json({"error": "Rate limited — wait before registering again"}, 429)
-    RELAY_RATE_LIMIT[ip] = now
 
     data = request.get_json(silent=True)
     if not data:
@@ -905,12 +985,11 @@ def dns_reverse_lookup(agent_id):
 @app.route("/api/dns", methods=["POST"])
 def dns_register():
     """Register a new DNS name mapping (rate limited)."""
-    ip = get_real_ip()
-    now = time.time()
-    if ip in RATE_LIMIT and (now - RATE_LIMIT[ip]) < RATE_LIMIT_SECONDS:
-        return cors_json({"error": "Rate limited. Wait a moment."}, 429)
-    RATE_LIMIT[ip] = now
+    rl = enforce_rate_limit("api_dns_write", _write_limit_per_min())
+    if rl:
+        return rl
 
+    now = time.time()
     data = request.get_json(silent=True)
     if not data:
         return cors_json({"error": "Invalid JSON"}, 400)
@@ -1373,6 +1452,10 @@ def api_bounties():
         resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
         return resp, 204
 
+    rl = enforce_rate_limit("api_bounties_read", _read_limit_per_min())
+    if rl:
+        return rl
+
     db = get_db()
     rows = db.execute("SELECT * FROM bounty_contracts ORDER BY created_at DESC").fetchall()
     result = []
@@ -1404,6 +1487,10 @@ def api_bounties_sync():
         resp.headers["Access-Control-Allow-Methods"] = "POST"
         resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
         return resp, 204
+
+    rl = enforce_rate_limit("api_bounties_sync_write", _write_limit_per_min())
+    if rl:
+        return rl
 
     import urllib.request
     import re
@@ -1501,6 +1588,10 @@ def api_bounty_claim(bounty_id):
         resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
         return resp, 204
 
+    rl = enforce_rate_limit("api_bounties_claim_write", _write_limit_per_min())
+    if rl:
+        return rl
+
     data = request.get_json(silent=True)
     if not data or not data.get("agent_id"):
         return cors_json({"error": "agent_id required"}, 400)
@@ -1558,6 +1649,10 @@ def api_bounty_complete(bounty_id):
         resp.headers["Access-Control-Allow-Methods"] = "POST"
         resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
         return resp, 204
+
+    rl = enforce_rate_limit("api_bounties_complete_write", _write_limit_per_min())
+    if rl:
+        return rl
 
     data = request.get_json(silent=True)
     if not data or not data.get("agent_id"):
@@ -1663,6 +1758,10 @@ def relay_ping():
         resp.headers["Access-Control-Allow-Methods"] = "POST"
         resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
         return resp, 204
+
+    rl = enforce_rate_limit("relay_ping_write", _write_limit_per_min())
+    if rl:
+        return rl
 
     data = request.get_json(silent=True)
     if not data:
