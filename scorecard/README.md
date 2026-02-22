@@ -31,7 +31,7 @@ Edit `agents.yaml` to define your fleet. See `example-elyan-labs.yaml` for a ful
 | Field | Required | Description |
 |-------|----------|-------------|
 | `name` | Yes | Display name on the dashboard |
-| `beacon_id` | No | Beacon ID (`bcn_xxxxxxxxxxxx`) from `beacon init` |
+| `beacon_id` | No | Beacon ID (`bcn_xxxxxxxxxxxx`) from `beacon identity new` |
 | `role` | No | Short role description |
 | `color` | No | Hex color for the card accent bar |
 | `bottube_slug` | No | BoTTube agent slug for live video count |

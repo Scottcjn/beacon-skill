@@ -8,8 +8,16 @@
 # Docs: https://github.com/Scottcjn/beacon-skill/tree/main/scorecard
 # ============================================================
 
-fleet_name: "My Agent Fleet"
-fleet_owner: ""                  # Optional — your name or org
+fleet_name: "Jarvis AI Fleet"
+fleet_owner: "whynice724-cell"
+
+agents:
+  - name: "Jarvis AI"
+    beacon_id: "bcn_348a1a50f8a2"
+    role: "AI Assistant"
+    color: "#4A90D9"
+    bottube_slug: "JarvisAI"
+    platforms: [bottube, beacon]                  # Optional — your name or org
 
 # ── Scoring Weights ──────────────────────────────────────────
 # Each category has a max score. Total max = sum of all weights.
