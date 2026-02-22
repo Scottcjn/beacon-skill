@@ -70,6 +70,20 @@ class TestRelayPingSecurity(unittest.TestCase):
         payload = response.get_json()
         self.assertIn("signature required", payload["error"])
 
+    def test_relay_ping_rejects_non_hex_pubkey(self) -> None:
+        response = self.client.post(
+            "/relay/ping",
+            json={
+                "agent_id": "bcn_badpubkey01",
+                "name": "Bad Pubkey Agent",
+                "pubkey_hex": "zzzz",
+                "signature": "00",
+            },
+        )
+        self.assertEqual(response.status_code, 400)
+        payload = response.get_json()
+        self.assertIn("pubkey_hex is not valid hex", payload["error"])
+
     def test_relay_ping_existing_agent_requires_relay_token(self) -> None:
         self._insert_existing_agent()
         response = self.client.post(

@@ -1756,6 +1756,18 @@ def relay_ping():
                 "error": "pubkey_hex required for new agent registration",
                 "hint": "Include your Ed25519 public key"
             }, 400)
+
+        if len(pubkey_hex) != 64:
+            return cors_json({
+                "error": "pubkey_hex must be 64 hex chars (32 bytes Ed25519)"
+            }, 400)
+
+        try:
+            bytes.fromhex(pubkey_hex)
+        except ValueError:
+            return cors_json({
+                "error": "pubkey_hex is not valid hex"
+            }, 400)
         
         if not signature_hex:
             return cors_json({
