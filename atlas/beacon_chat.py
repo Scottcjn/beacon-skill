@@ -1749,14 +1749,13 @@ def boot_fetch_swarmhub():
 def relay_ping():
     """Open heartbeat endpoint for beacon_skill auto-discovery.
 
-    Any agent using beacon_skill can ping this to appear on the Atlas.
-    Auto-registers if not already known. No auth required.
+    Requires Ed25519 signature for new agent registration, or relay_token for existing agents.
     """
     if request.method == "OPTIONS":
         resp = jsonify({})
         resp.headers["Access-Control-Allow-Origin"] = "*"
         resp.headers["Access-Control-Allow-Methods"] = "POST"
-        resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
+        resp.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
         return resp, 204
 
     rl = enforce_rate_limit("relay_ping_write", _write_limit_per_min())
@@ -1774,6 +1773,8 @@ def relay_ping():
     health_data = data.get("health", None)
     provider = data.get("provider", "beacon").strip()
     preferred_city = data.get("preferred_city", "").strip()
+    pubkey_hex = data.get("pubkey_hex", "").strip()
+    signature = data.get("signature", "").strip()
 
     if not agent_id:
         return cors_json({"error": "agent_id required"}, 400)
@@ -1789,6 +1790,14 @@ def relay_ping():
     row = db.execute("SELECT * FROM relay_agents WHERE agent_id = ?", (agent_id,)).fetchone()
 
     if row:
+        # Existing agent - require relay_token for heartbeat updates
+        auth = request.headers.get("Authorization", "")
+        if not auth.startswith("Bearer "):
+            return cors_json({"error": "Missing Authorization: Bearer <relay_token>. Existing agents must authenticate with their relay_token."}, 401)
+        token = auth[7:].strip()
+        if row["relay_token"] != token:
+            return cors_json({"error": "Invalid relay_token"}, 403)
+
         new_beat = row["beat_count"] + 1
         meta = json.loads(row["metadata"] or "{}")
         if health_data:
@@ -1807,13 +1816,37 @@ def relay_ping():
             "status": status_val, "assessment": "healthy",
         })
     else:
+        # New agent registration - require signature + pubkey_hex
+        if not pubkey_hex:
+            return cors_json({"error": "pubkey_hex required for new agent registration"}, 400)
+        if len(pubkey_hex) != 64:
+            return cors_json({"error": "pubkey_hex must be 64 hex chars (32 bytes Ed25519)"}, 400)
+        try:
+            bytes.fromhex(pubkey_hex)
+        except ValueError:
+            return cors_json({"error": "pubkey_hex is not valid hex"}, 400)
+
+        if not signature:
+            return cors_json({"error": "signature required for new agent registration. Sign your agent_id with your Ed25519 private key."}, 400)
+
+        # Verify signature - payload is agent_id
+        sig_payload = agent_id.encode("utf-8")
+        sig_verified = verify_ed25519(pubkey_hex, signature, sig_payload)
+        if sig_verified is False:
+            return cors_json({"error": "Invalid Ed25519 signature. Signature must sign the agent_id."}, 403)
+
+        # Verify the pubkey derives to the agent_id
+        derived_agent_id = agent_id_from_pubkey_hex(pubkey_hex)
+        if derived_agent_id != agent_id:
+            return cors_json({"error": f"agent_id mismatch. pubkey_hex derives to {derived_agent_id}, but got {agent_id}"}, 400)
+
         auto_token = "relay_" + secrets.token_hex(24)
         db.execute(
             "INSERT INTO relay_agents"
             " (agent_id, pubkey_hex, model_id, provider, capabilities, webhook_url,"
             "  relay_token, token_expires, name, status, beat_count, registered_at, last_heartbeat, metadata, origin_ip)"
             " VALUES (?,?,?,?,?,'',?,?,?,'active',1,?,?,'{}',?)",
-            (agent_id, secrets.token_hex(32), name, provider,
+            (agent_id, pubkey_hex, name, provider,
              json.dumps(capabilities if isinstance(capabilities, list) else []),
              auto_token, now + RELAY_TOKEN_TTL_S, name, now, now, ip))
         db.commit()
@@ -1828,6 +1861,7 @@ def relay_ping():
             "ok": True, "agent_id": agent_id, "beat_count": 1,
             "status": status_val, "auto_registered": True,
             "relay_token": auto_token, "assessment": "healthy",
+            "signature_verified": sig_verified is True,
         }, 201)
 
 
