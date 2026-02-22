@@ -1764,7 +1764,7 @@ def relay_ping():
             }, 400)
         
         # Verify agent_id matches pubkey
-        expected_agent_id = agent_id_from_pubkey(pubkey_hex)
+        expected_agent_id = agent_id_from_pubkey_hex(pubkey_hex)
         if expected_agent_id != agent_id:
             return cors_json({
                 "error": "agent_id does not match pubkey",
@@ -1774,15 +1774,18 @@ def relay_ping():
         # Verify signature (sign the agent_id)
         sig_result = verify_ed25519(pubkey_hex, signature_hex, agent_id.encode("utf-8"))
         
+        if sig_result is None:
+            app.logger.error("NaCl unavailable, rejecting registration for %s", agent_id)
+            return cors_json({
+                "error": "Signature verification unavailable",
+                "hint": "Server missing Ed25519 verification support"
+            }, 503)
+
         if sig_result is False:
             return cors_json({
                 "error": "Invalid signature",
                 "hint": "Sign your agent_id with your Ed25519 private key"
             }, 403)
-        
-        if sig_result is None:
-            # NaCl not available - log warning but allow (server config issue)
-            app.logger.warning(f"NaCl unavailable, accepting unsigned registration for {agent_id}")
         
         # Signature valid - proceed with registration
         auto_token = "relay_" + secrets.token_hex(24)
@@ -1815,4 +1818,3 @@ def relay_ping():
 if __name__ == "__main__":
     boot_fetch_swarmhub()
     app.run(host="127.0.0.1", port=8071, debug=False)
-
