@@ -336,7 +336,9 @@ class RelayManager:
         for data in agents.values():
             agent = RelayAgent(data)
             # Update status assessment
-            data["status"] = agent.assess_status()
+            assessed_status = agent.assess_status()
+            data["status"] = assessed_status
+            agent.status = assessed_status
 
             if provider and data.get("provider") != provider:
                 continue
@@ -355,7 +357,9 @@ class RelayManager:
         if not data:
             return None
         agent = RelayAgent(data)
-        data["status"] = agent.assess_status()
+        assessed_status = agent.assess_status()
+        data["status"] = assessed_status
+        agent.status = assessed_status
         return agent.to_public_dict()
 
     # ── Message Forwarding ──
