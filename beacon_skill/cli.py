@@ -495,6 +495,81 @@ def cmd_identity_trust(args: argparse.Namespace) -> int:
     return 0
 
 
+# ── Keys management (TOFU) ──
+
+def cmd_keys_list(args: argparse.Namespace) -> int:
+    from .inbox import list_keys, is_key_expired
+    import time
+    
+    keys = list_keys(show_expired=args.show_expired)
+    now = time.time()
+    
+    # Convert to list format for display
+    result = []
+    for agent_id, meta in sorted(keys.items()):
+        expired = is_key_expired(meta, now)
+        result.append({
+            "agent_id": agent_id,
+            "pubkey_hex": meta.get("pubkey_hex", ""),
+            "first_seen": meta.get("first_seen", 0),
+            "last_seen": meta.get("last_seen", 0),
+            "rotation_count": meta.get("rotation_count", 0),
+            "expired": expired,
+            "ttl_seconds": meta.get("ttl_seconds", 30 * 24 * 60 * 60),
+        })
+    
+    print(json.dumps(result, indent=2))
+    return 0
+
+
+def cmd_keys_revoke(args: argparse.Namespace) -> int:
+    from .inbox import revoke_key, get_key_metadata
+    
+    meta = get_key_metadata(args.agent_id)
+    if not meta:
+        print(json.dumps({"ok": False, "error": "Key not found"}))
+        return 1
+    
+    revoked = revoke_key(args.agent_id)
+    if revoked:
+        print(json.dumps({"ok": True, "revoked": args.agent_id}))
+        return 0
+    else:
+        print(json.dumps({"ok": False, "error": "Failed to revoke key"}))
+        return 1
+
+
+def cmd_keys_rotate(args: argparse.Namespace) -> int:
+    from .inbox import rotate_key, get_key_metadata, load_known_keys
+    from .identity import AgentIdentity
+    
+    # Get the current key metadata
+    meta = get_key_metadata(args.agent_id)
+    if not meta:
+        print(json.dumps({"ok": False, "error": "Key not found for agent"}))
+        return 1
+    
+    # Load identity to sign the new key
+    identity = _load_identity(args)
+    if not identity:
+        print(json.dumps({"ok": False, "error": "No identity loaded (run 'beacon init' or provide --password)"}))
+        return 1
+    
+    # Sign the new public key with the old identity
+    new_pubkey_bytes = bytes.fromhex(args.new_pubkey_hex)
+    signature = identity.sign(new_pubkey_bytes)
+    
+    # Perform rotation
+    success = rotate_key(args.agent_id, args.new_pubkey_hex, signature)
+    
+    if success:
+        print(json.dumps({"ok": True, "rotated": args.agent_id, "new_pubkey": args.new_pubkey_hex}))
+        return 0
+    else:
+        print(json.dumps({"ok": False, "error": "Rotation failed - signature verification failed"}))
+        return 1
+
+
 # ── UDP ──
 
 def _parse_kv_fields(items: List[str]) -> Dict[str, Any]:
@@ -4370,6 +4445,24 @@ def main(argv: Optional[List[str]] = None) -> None:
     sp.add_argument("agent_id", help="Agent ID (bcn_...)")
     sp.add_argument("pubkey_hex", help="Public key hex (64 chars)")
     sp.set_defaults(func=cmd_identity_trust)
+
+    # keys - TOFU key management
+    keys_p = sub.add_parser("keys", help="TOFU key management (list, revoke, rotate)")
+    keys_sub = keys_p.add_subparsers(dest="keys_cmd", required=True)
+
+    sp = keys_sub.add_parser("list", help="List known agent keys")
+    sp.add_argument("--show-expired", action="store_true", help="Include expired keys")
+    sp.set_defaults(func=cmd_keys_list)
+
+    sp = keys_sub.add_parser("revoke", help="Revoke a trusted agent key")
+    sp.add_argument("agent_id", help="Agent ID (bcn_...)")
+    sp.set_defaults(func=cmd_keys_revoke)
+
+    sp = keys_sub.add_parser("rotate", help="Rotate a key (sign new key with old identity)")
+    sp.add_argument("agent_id", help="Agent ID whose key is being rotated")
+    sp.add_argument("new_pubkey_hex", help="New public key hex (64 chars)")
+    sp.add_argument("--password", default=None, help="Password for encrypted identity")
+    sp.set_defaults(func=cmd_keys_rotate)
 
     # inbox
     inbox_p = sub.add_parser("inbox", help="Read and manage received beacons")
