@@ -227,9 +227,123 @@ def init_db():
 
 init_db()
 
-# --- Rate limiting ---
-RATE_LIMIT = {}  # ip -> last_request_time
-RATE_LIMIT_SECONDS = 3  # min seconds between requests per IP
+# --- Rate limiting (token bucket) ---
+import threading
+
+class TokenBucketRateLimiter:
+    """In-process token bucket rate limiter — no external deps required.
+
+    Each IP gets a bucket with `capacity` tokens. Tokens refill at
+    `refill_rate` per second. Every request consumes one token.
+    Thread-safe via a lock.
+    """
+
+    def __init__(self, capacity, refill_rate):
+        self.capacity = capacity
+        self.refill_rate = refill_rate      # tokens per second
+        self._buckets = {}                  # ip -> (tokens, last_refill)
+        self._lock = threading.Lock()
+        self._gc_threshold = 10000          # prune after this many entries
+
+    def _refill(self, tokens, last_refill, now):
+        elapsed = now - last_refill
+        new_tokens = tokens + elapsed * self.refill_rate
+        return min(new_tokens, self.capacity), now
+
+    def allow(self, ip):
+        """Return (allowed: bool, retry_after: float|None)."""
+        now = time.time()
+        with self._lock:
+            if ip in self._buckets:
+                tokens, last_refill = self._buckets[ip]
+                tokens, last_refill = self._refill(tokens, last_refill, now)
+            else:
+                tokens, last_refill = self.capacity, now
+
+            if tokens >= 1.0:
+                self._buckets[ip] = (tokens - 1.0, last_refill)
+                return True, None
+            else:
+                # How long until 1 token is available
+                wait = (1.0 - tokens) / self.refill_rate
+                self._buckets[ip] = (tokens, last_refill)
+                return False, round(wait, 1)
+
+    def gc(self):
+        """Prune stale entries (call periodically)."""
+        now = time.time()
+        stale = now - self.capacity / self.refill_rate - 300  # fully refilled + 5 min
+        with self._lock:
+            self._buckets = {
+                ip: (t, lr) for ip, (t, lr) in self._buckets.items()
+                if lr > stale
+            }
+
+
+# Read endpoints:  60 req/min (1/s refill, burst up to 60)
+_read_limiter = TokenBucketRateLimiter(capacity=60, refill_rate=1.0)
+# Write endpoints: 10 req/min (1/6s refill, burst up to 10)
+_write_limiter = TokenBucketRateLimiter(capacity=10, refill_rate=1/6.0)
+
+# Endpoints classified as "write" for stricter limits
+_WRITE_PATHS = {
+    "/relay/register",
+    "/relay/ping",
+    "/relay/heartbeat",
+    "/relay/message",
+    "/api/contracts",      # POST only (GET is read)
+    "/api/dns",            # POST only
+    "/api/bounties/sync",
+    # /api/bounties/<id>/claim and /api/bounties/<id>/complete matched dynamically
+}
+
+def _is_write_request():
+    """Determine if current request is a write operation."""
+    if request.method in ("GET", "HEAD", "OPTIONS"):
+        return False
+    path = request.path.rstrip("/")
+    if path in _WRITE_PATHS:
+        return True
+    # Match dynamic bounty claim/complete paths
+    if "/api/bounties/" in path and (path.endswith("/claim") or path.endswith("/complete")):
+        return True
+    # PATCH on contracts
+    if path.startswith("/api/contracts/") and request.method == "PATCH":
+        return True
+    return False
+
+
+@app.before_request
+def _rate_limit_check():
+    """Global rate-limit check applied before every request."""
+    if request.method == "OPTIONS":
+        return None  # Always allow CORS preflight
+
+    ip = get_real_ip()
+    is_write = _is_write_request()
+    limiter = _write_limiter if is_write else _read_limiter
+
+    allowed, retry_after = limiter.allow(ip)
+    if not allowed:
+        resp = jsonify({
+            "error": "Rate limited. Too many requests.",
+            "retry_after": retry_after,
+        })
+        resp.headers["Access-Control-Allow-Origin"] = "*"
+        resp.headers["Retry-After"] = str(int(retry_after + 0.5))
+        return resp, 429
+
+    # Periodic GC (roughly every 1000 requests — cheap check)
+    if hash(ip) % 1000 == 0:
+        _read_limiter.gc()
+        _write_limiter.gc()
+
+    return None
+
+
+# Legacy compat — keep old names around so any code referencing them won't crash
+RATE_LIMIT = {}
+RATE_LIMIT_SECONDS = 3
 
 # --- LLM Configuration ---
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434/api/chat")
@@ -404,12 +518,12 @@ def chat():
         resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
         return resp, 204
 
-    # Rate limit
-    ip = get_real_ip()
-    now = time.time()
-    if ip in RATE_LIMIT and (now - RATE_LIMIT[ip]) < RATE_LIMIT_SECONDS:
-        return cors_json({"error": "Rate limited. Wait a moment."}, 429)
-    RATE_LIMIT[ip] = now
+    # Rate limiting handled globally by @app.before_request
+
+
+
+
+
 
     data = request.get_json(silent=True)
     if not data:
@@ -493,11 +607,11 @@ def list_contracts():
 
 @app.route("/api/contracts", methods=["POST"])
 def create_contract():
-    ip = get_real_ip()
-    now = time.time()
-    if ip in RATE_LIMIT and (now - RATE_LIMIT[ip]) < RATE_LIMIT_SECONDS:
-        return cors_json({"error": "Rate limited. Wait a moment."}, 429)
-    RATE_LIMIT[ip] = now
+    # Rate limiting handled globally by @app.before_request
+
+
+
+
 
     data = request.get_json(silent=True)
     if not data:
@@ -621,12 +735,12 @@ def relay_register():
         resp.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
         return resp, 204
 
-    # Rate limit registration
-    ip = get_real_ip()
-    now = time.time()
-    if ip in RELAY_RATE_LIMIT and (now - RELAY_RATE_LIMIT[ip]) < RELAY_REGISTER_COOLDOWN_S:
-        return cors_json({"error": "Rate limited — wait before registering again"}, 429)
-    RELAY_RATE_LIMIT[ip] = now
+    # Rate limiting handled globally by @app.before_request
+
+
+
+
+
 
     data = request.get_json(silent=True)
     if not data:
@@ -905,11 +1019,11 @@ def dns_reverse_lookup(agent_id):
 @app.route("/api/dns", methods=["POST"])
 def dns_register():
     """Register a new DNS name mapping (rate limited)."""
-    ip = get_real_ip()
-    now = time.time()
-    if ip in RATE_LIMIT and (now - RATE_LIMIT[ip]) < RATE_LIMIT_SECONDS:
-        return cors_json({"error": "Rate limited. Wait a moment."}, 429)
-    RATE_LIMIT[ip] = now
+    # Rate limiting handled globally by @app.before_request
+
+
+
+
 
     data = request.get_json(silent=True)
     if not data:
