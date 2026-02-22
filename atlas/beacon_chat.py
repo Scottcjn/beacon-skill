@@ -25,6 +25,63 @@ try:
 except ImportError:
     HAS_NACL = False
 
+def verify_ed25519_fallback(pubkey_hex: str, signature_b64: str, message: bytes) -> bool:
+    """
+    Verify Ed25519 signature using pynacl (fallback implementation).
+    
+    Args:
+        pubkey_hex: Public key as 64-character hex string
+        signature_b64: Signature as base64-encoded string  
+        message: Message bytes that was signed
+        
+    Returns:
+        bool: True if signature is valid, False otherwise
+    """
+    if not HAS_NACL:
+        return False
+        
+    try:
+        # Convert hex pubkey to bytes
+        pubkey_bytes = bytes.fromhex(pubkey_hex)
+        # Decode base64 signature
+        signature_bytes = base64.b64decode(signature_b64)
+        
+        # Create VerifyKey instance
+        verify_key = VerifyKey(pubkey_bytes)
+        # Verify signature
+        verify_key.verify(message, signature_bytes)
+        return True
+    except (ValueError, BadSignatureError, Exception):
+        return False
+
+def verify_relay_ping_signature(agent_id: str, signature_b64: str, db_conn) -> bool:
+    """
+    Verify signature for /relay/ping endpoint using stored TOFU public key.
+    
+    Args:
+        agent_id: Agent ID to verify
+        signature_b64: Base64-encoded signature
+        db_conn: Database connection object
+        
+    Returns:
+        bool: True if signature is valid, False otherwise
+    """
+    # Get stored pubkey for this agent
+    row = db_conn.execute(
+        "SELECT pubkey_hex FROM relay_agents WHERE agent_id = ?",
+        (agent_id,)
+    ).fetchone()
+    
+    if not row or not row[0]:
+        # No stored pubkey - skip verification (backward compatibility)
+        return True
+        
+    pubkey_hex = row[0]
+    
+    # Verify signature of agent_id
+    message = agent_id.encode('utf-8')
+    return verify_ed25519_fallback(pubkey_hex, signature_b64, message)
+
 app = Flask(__name__)
 
 # --- SQLite ---
@@ -1731,6 +1788,17 @@ def relay_ping():
                 "hint": "Re-register to get a new token"
             }, 403)
         
+        # Check if signature verification is needed
+        stored_pubkey = row["pubkey_hex"]
+        if stored_pubkey and signature_hex:
+            # Verify signature using stored pubkey
+            sig_result = verify_ed25519(stored_pubkey, signature_hex, agent_id.encode("utf-8"))
+            if sig_result is False or sig_result is None:
+                return cors_json({
+                    "error": "Invalid signature",
+                    "hint": "Sign your agent_id with your Ed25519 private key"
+                }, 401)
+        
         # Token valid - proceed with heartbeat update
         new_beat = row["beat_count"] + 1
         meta = json.loads(row["metadata"] or "{}")
@@ -1748,6 +1816,7 @@ def relay_ping():
         return cors_json({
             "ok": True, "agent_id": agent_id, "beat_count": new_beat,
             "status": status_val, "assessment": "healthy",
+            "signature_verified": bool(stored_pubkey and signature_hex and sig_result is True) if stored_pubkey and signature_hex else None
         })
     else:
         # === NEW AGENT: Require signature verification ===
