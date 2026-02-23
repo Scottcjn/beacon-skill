@@ -110,7 +110,7 @@ def agent_id_from_pubkey_hex(pubkey_hex):
 def verify_ed25519(pubkey_hex, signature_hex, data_bytes):
     """Verify Ed25519 signature. Returns True/False, or None if nacl unavailable."""
     if not HAS_NACL:
-        return None  # Cannot verify — accept on trust
+        return None  # Cannot verify in this runtime
     try:
         vk = VerifyKey(bytes.fromhex(pubkey_hex))
         vk.verify(data_bytes, bytes.fromhex(signature_hex))
@@ -770,6 +770,12 @@ def relay_register():
             "pubkey_hex": pubkey_hex,
         }, sort_keys=True, separators=(",", ":")).encode("utf-8")
         sig_verified = verify_ed25519(pubkey_hex, signature, reg_payload)
+        if sig_verified is None:
+            app.logger.error("NaCl unavailable, rejecting signed registration for pubkey %s", pubkey_hex[:16])
+            return cors_json({
+                "error": "Signature verification unavailable",
+                "hint": "Server missing Ed25519 verification support (PyNaCl)"
+            }, 503)
         if sig_verified is False:
             return cors_json({"error": "Invalid Ed25519 signature"}, 403)
 
