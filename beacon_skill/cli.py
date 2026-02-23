@@ -499,6 +499,69 @@ def cmd_identity_trust(args: argparse.Namespace) -> int:
     return 0
 
 
+# ── keys - TOFU key management ──
+
+def cmd_keys_list(args: argparse.Namespace) -> int:
+    from .key_management import list_keys
+    keys = list_keys(
+        include_revoked=args.include_revoked,
+        include_expired=args.include_expired,
+    )
+    if args.json:
+        print(json.dumps(keys, indent=2))
+    else:
+        if not keys:
+            print("No trusted keys found.")
+            return 0
+        print(f"{'Agent ID':<20} {'Status':<10} {'Rotations':<12} {'Age (days)':<12}")
+        print("-" * 54)
+        for k in keys:
+            status = "REVOKED" if k["is_revoked"] else ("EXPIRED" if k["is_expired"] else "active")
+            print(f"{k['agent_id']:<20} {status:<10} {k['rotation_count']:<12} {k['age_days']:<12}")
+    return 0
+
+
+def cmd_keys_revoke(args: argparse.Namespace) -> int:
+    from .key_management import revoke_key
+    success = revoke_key(args.agent_id, args.reason)
+    if success:
+        print(json.dumps({"ok": True, "revoked": args.agent_id, "reason": args.reason}))
+    else:
+        print(json.dumps({"error": f"Key not found for agent {args.agent_id}"}), file=sys.stderr)
+        return 1
+    return 0
+
+
+def cmd_keys_rotate(args: argparse.Namespace) -> int:
+    from .key_management import rotate_key
+    from .identity import agent_id_from_pubkey
+
+    # Determine agent_id: use override or derive from new pubkey
+    if args.agent_id_override:
+        agent_id = args.agent_id_override
+    else:
+        agent_id = agent_id_from_pubkey(bytes.fromhex(args.new_pubkey_hex))
+
+    success, message = rotate_key(agent_id, args.new_pubkey_hex, args.signature_hex)
+    if success:
+        print(json.dumps({"ok": True, "agent_id": agent_id, "message": message}))
+    else:
+        print(json.dumps({"error": message}), file=sys.stderr)
+        return 1
+    return 0
+
+
+def cmd_keys_info(args: argparse.Namespace) -> int:
+    from .key_management import get_key_info
+    info = get_key_info(args.agent_id)
+    if info:
+        print(json.dumps(info, indent=2))
+    else:
+        print(json.dumps({"error": f"No key found for agent {args.agent_id}"}), file=sys.stderr)
+        return 1
+    return 0
+
+
 # ── UDP ──
 
 def _parse_kv_fields(items: List[str]) -> Dict[str, Any]:
@@ -4551,6 +4614,31 @@ def main(argv: Optional[List[str]] = None) -> None:
     sp.add_argument("agent_id", help="Agent ID (bcn_...)")
     sp.add_argument("pubkey_hex", help="Public key hex (64 chars)")
     sp.set_defaults(func=cmd_identity_trust)
+
+    # keys - TOFU key management
+    keys_p = ident_sub.add_parser("keys", help="Manage trusted keys (list, revoke, rotate)")
+    keys_sub = keys_p.add_subparsers(dest="keys_cmd", required=True)
+
+    sp = keys_sub.add_parser("list", help="List all trusted keys")
+    sp.add_argument("--include-revoked", action="store_true", help="Include revoked keys")
+    sp.add_argument("--include-expired", action="store_true", default=True, help="Include expired keys (default: True)")
+    sp.add_argument("--json", action="store_true", help="Output as JSON")
+    sp.set_defaults(func=cmd_keys_list)
+
+    sp = keys_sub.add_parser("revoke", help="Revoke a trusted key")
+    sp.add_argument("agent_id", help="Agent ID (bcn_...)")
+    sp.add_argument("--reason", default=None, help="Reason for revocation")
+    sp.set_defaults(func=cmd_keys_revoke)
+
+    sp = keys_sub.add_parser("rotate", help="Rotate a trusted key (sign new key with old key)")
+    sp.add_argument("new_pubkey_hex", help="New public key hex (64 chars)")
+    sp.add_argument("signature_hex", help="Signature of new_pubkey_hex using old private key (128 hex chars)")
+    sp.add_argument("--agent-id", dest="agent_id_override", default=None, help="Agent ID (optional, derived from new_pubkey if not provided)")
+    sp.set_defaults(func=cmd_keys_rotate)
+
+    sp = keys_sub.add_parser("info", help="Show detailed info for a specific key")
+    sp.add_argument("agent_id", help="Agent ID (bcn_...)")
+    sp.set_defaults(func=cmd_keys_info)
 
     # inbox
     inbox_p = sub.add_parser("inbox", help="Read and manage received beacons")
