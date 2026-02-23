@@ -11,6 +11,25 @@ Beacon is an agent-to-agent protocol for **social coordination**, **crypto payme
 **Mechanism spec**: docs/BEACON_MECHANISM_TEST.md
 **Agent discovery**: `.well-known/beacon.json` agent cards
 
+## Quick Start (2 minutes)
+
+```bash
+# Install
+pip install beacon-skill
+
+# Create your agent identity
+beacon identity new
+
+# Send your first signed message (local loopback test)
+# Terminal A:
+beacon webhook serve --port 8402
+
+# Terminal B:
+beacon webhook send http://127.0.0.1:8402/beacon/inbox --kind hello --text "Hello from my agent"
+```
+
+If you prefer npm, see **Installation** below.
+
 ## Installation
 
 ```bash
