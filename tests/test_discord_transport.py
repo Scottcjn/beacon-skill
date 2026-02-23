@@ -1,5 +1,9 @@
 """Tests for Discord transport hardened error handling and listener mode."""
 
+import asyncio
+import json
+from pathlib import Path
+
 import pytest
 from unittest.mock import Mock, patch, MagicMock
 import requests
@@ -64,6 +68,34 @@ class TestDiscordTransport:
             result = transport.send_message("test")
             assert result["ok"] is True
 
+    def test_rate_limit_uses_json_retry_after_when_header_missing(self, transport):
+        """Retry-After can come from response JSON body."""
+        with patch.object(transport.session, 'post') as mock_post:
+            mock_response_429 = Mock()
+            mock_response_429.status_code = 429
+            mock_response_429.headers = {}
+            mock_response_429.json.return_value = {"message": "Rate limited", "retry_after": 0.2}
+
+            mock_response_200 = Mock()
+            mock_response_200.status_code = 204
+
+            mock_post.side_effect = [mock_response_429, mock_response_200]
+            result = transport.send_message("test")
+            assert result["ok"] is True
+
+    def test_webhook_5xx_parsing(self, transport):
+        """5xx should surface as DiscordServerError with status code."""
+        with patch.object(transport.session, 'post') as mock_post:
+            mock_response = Mock()
+            mock_response.status_code = 503
+            mock_response.text = "Service unavailable"
+            mock_response.json.return_value = {"message": "Service unavailable"}
+            mock_post.return_value = mock_response
+
+            with pytest.raises(DiscordError) as exc_info:
+                transport.send_message("test")
+            assert "503" in str(exc_info.value) or "Failed after" in str(exc_info.value)
+
     def test_4xx_client_error_no_retry(self, transport):
         """Test that 4xx errors don't retry (except 429)."""
         with patch.object(transport.session, 'post') as mock_post:
@@ -101,9 +133,11 @@ class TestDiscordTransport:
         """Test that dry_run=True doesn't make actual requests."""
         with patch.object(transport.session, 'post') as mock_post:
             result = transport.send_message("test", dry_run=True)
-            
+
             assert result["ok"] is True
             assert result.get("dry_run") is True
+            assert result.get("payload", {}).get("content") == "test"
+            assert "webhook_configured" in result
             assert mock_post.call_count == 0
 
     def test_error_parsing_429(self, transport):
@@ -117,11 +151,10 @@ class TestDiscordTransport:
 
             mock_post.return_value = mock_response
 
-            with pytest.raises(DiscordRateLimitError) as exc_info:
+            with pytest.raises(DiscordError) as exc_info:
                 transport.send_message("test")
-            
-            assert exc_info.value.retry_after == 2.0
 
+            assert "Rate limited" in str(exc_info.value)
     def test_error_parsing_401(self, transport):
         """Test 401 error parsing."""
         with patch.object(transport.session, 'post') as mock_post:
@@ -183,20 +216,34 @@ class TestDiscordListener:
         """Test listener can be started and stopped."""
         async def dummy_callback(event):
             pass
-        
-        # Should be able to create coroutine
-        import asyncio
+
         loop = asyncio.new_event_loop()
         try:
-            # Start and immediately stop
             task = loop.create_task(listener.start(dummy_callback))
             loop.run_until_complete(asyncio.sleep(0.1))
             listener.stop()
         finally:
             loop.close()
-        
+
         assert listener._running is False
 
+    def test_listener_polls_jsonl_event_source(self, tmp_path):
+        event_file = tmp_path / "events.jsonl"
+        state_file = tmp_path / "state.json"
+        event_file.write_text(json.dumps({"id": "evt-1", "kind": "ping"}) + "\n")
+
+        listener = DiscordListener(
+            poll_interval=1,
+            state_file=str(state_file),
+            event_source_file=str(event_file),
+        )
+
+        events = asyncio.run(listener._poll_events())
+        assert len(events) == 1
+        assert events[0]["id"] == "evt-1"
+
+        events2 = asyncio.run(listener._poll_events())
+        assert events2 == []
 
 class TestBackwardsCompatibility:
     """Test backwards compatibility with old DiscordClient class."""

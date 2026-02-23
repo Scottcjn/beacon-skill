@@ -74,28 +74,38 @@ class DiscordTransport:
     def _parse_response_error(self, response: requests.Response) -> DiscordError:
         """Parse HTTP error response and return appropriate exception."""
         status = response.status_code
-        
-        # Try to parse JSON error message
+
+        data: Dict[str, Any] = {}
         message = f"HTTP {status}"
         try:
-            data = response.json()
-            if isinstance(data, dict):
-                message = data.get("message", message)
+            obj = response.json()
+            if isinstance(obj, dict):
+                data = obj
+                message = obj.get("message", message)
         except Exception:
             message = response.text[:200] if response.text else message
-        
-        # 4xx client errors
+
         if 400 <= status < 500:
             if status == 429:
-                # Rate limited - try to get retry_after
-                retry_after = float(response.headers.get("Retry-After", 1))
-                return DiscordRateLimitError(retry_after, message)
+                retry_after_raw = (
+                    response.headers.get("Retry-After")
+                    or data.get("retry_after")
+                    or data.get("Retry-After")
+                    or 1
+                )
+                try:
+                    retry_after = float(retry_after_raw)
+                except Exception:
+                    retry_after = 1.0
+                # Defensive: if ms accidentally provided, normalize to seconds.
+                if retry_after > 1000:
+                    retry_after = retry_after / 1000.0
+                return DiscordRateLimitError(max(0.1, retry_after), message)
             return DiscordClientError(status, message)
-        
-        # 5xx server errors
+
         if status >= 500:
             return DiscordServerError(status, message)
-        
+
         return DiscordError(message)
 
     def _calculate_backoff(self, attempt: int, retry_after: Optional[float] = None) -> float:
@@ -116,7 +126,13 @@ class DiscordTransport:
         def _do() -> Dict[str, Any]:
             if dry_run:
                 logger.info(f"DRY RUN: Would send to Discord: {payload}")
-                return {"ok": True, "status": 200, "dry_run": True}
+                return {
+                    "ok": True,
+                    "status": 200,
+                    "dry_run": True,
+                    "payload": payload,
+                    "webhook_configured": bool(self.webhook_url),
+                }
             
             resp = self.session.post(
                 self.webhook_url, 
@@ -243,13 +259,16 @@ class DiscordListener:
         poll_interval: int = 30,
         state_file: Optional[str] = None,
         max_backlog: int = 100,
+        event_source_file: Optional[str] = None,
     ):
         self.webhook_url = webhook_url or ""
         self.poll_interval = poll_interval
         self.state_file = state_file
         self.max_backlog = max_backlog
+        self.event_source_file = event_source_file or os.getenv("BEACON_DISCORD_EVENT_SOURCE", "")
         self._running = False
         self._last_event_id: Optional[str] = None
+        self._file_offset: int = 0
         self._callback: Optional[Callable[[Dict[str, Any]], None]] = None
         
         # Load state if exists
@@ -257,6 +276,7 @@ class DiscordListener:
             try:
                 state = json.loads(Path(state_file).read_text())
                 self._last_event_id = state.get("last_event_id")
+                self._file_offset = int(state.get("file_offset") or 0)
             except Exception as e:
                 logger.warning(f"Failed to load listener state: {e}")
 
@@ -267,6 +287,7 @@ class DiscordListener:
         try:
             state = {
                 "last_event_id": self._last_event_id,
+                "file_offset": self._file_offset,
                 "last_updated": datetime.utcnow().isoformat() + "Z",
             }
             Path(self.state_file).write_text(json.dumps(state, indent=2))
@@ -298,10 +319,50 @@ class DiscordListener:
         self._save_state()
 
     async def _poll_events(self) -> List[Dict[str, Any]]:
-        """Poll for new events. Override in subclass for custom polling logic."""
-        # Default implementation - returns empty list
-        # In production, this could poll Discord API or a message queue
-        return []
+        """Poll for new events from a local JSONL source file (lightweight listener mode)."""
+        src = (self.event_source_file or "").strip()
+        if not src:
+            return []
+
+        path = Path(src)
+        if not path.exists() or not path.is_file():
+            return []
+
+        events: List[Dict[str, Any]] = []
+        with path.open("r", encoding="utf-8", errors="ignore") as f:
+            try:
+                f.seek(self._file_offset)
+            except Exception:
+                self._file_offset = 0
+                f.seek(0)
+
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                except Exception:
+                    continue
+                if not isinstance(obj, dict):
+                    continue
+
+                event_id = str(obj.get("id") or obj.get("event_id") or "")
+                if self._last_event_id and event_id and event_id == self._last_event_id:
+                    continue
+
+                events.append(obj)
+                if event_id:
+                    self._last_event_id = event_id
+
+                if len(events) >= self.max_backlog:
+                    break
+
+            self._file_offset = int(f.tell())
+
+        if events:
+            self._save_state()
+        return events
 
     def run_sync(self, callback: Callable[[Dict[str, Any]], None]) -> None:
         """Run listener in synchronous mode (blocking)."""

@@ -33,8 +33,8 @@ beacon transport add discord \
 ### Step 3: Test the Connection
 
 ```bash
-beacon discord ping
-# Expected output: ✓ Webhook is reachable and responds to POST requests
+beacon discord ping "transport-check" --webhook-url "https://discord.com/api/webhooks/YOUR_ID/YOUR_TOKEN"
+# Expected output: JSON object with {"ok": true, ...}
 ```
 
 ### Step 4: Send a Test Message
@@ -113,24 +113,21 @@ result = transport.send_message("Test", dry_run=True)
 
 Beacon Discord Transport supports lightweight listener mode for consuming inbound webhook events.
 
-### Enable Listener
+### Enable Listener (JSONL poll/read mode)
 
-```python
-import asyncio
-from beacon_skill.transports.discord import DiscordListener
+Create a local JSONL stream (one event per line):
 
-async def handle_event(event):
-    print(f"Received event: {event}")
-
-listener = DiscordListener(
-    webhook_url="https://discord.com/api/webhooks/...",
-    poll_interval=30,
-    state_file="/var/lib/beacon/discord-state.json"
-)
-
-# Run listener
-await listener.start(handle_event)
+```json
+{"id":"evt-1","kind":"discord.message","content":"hello"}
 ```
+
+Run listener:
+
+```bash
+beacon discord listen   --event-source /var/lib/beacon/discord-events.jsonl   --state-file /var/lib/beacon/discord-listener-state.json   --poll-interval 10
+```
+
+This prints each new event as JSON and persists cursor (`file_offset`, `last_event_id`) in `state-file`.
 
 ### Listener Configuration
 
@@ -158,12 +155,15 @@ listener = DiscordListener(
 
 ### Problem: Messages are queued but never delivered
 
-**Cause**: Discord rate limiting or network issues.
+**Cause**: Discord rate limiting, webhook revoked, or transient 5xx.
 
 **Solution**:
-1. Check recent logs: `beacon logs --transport primary`
-2. Increase backoff multiplier
+1. Run dry-run shape check:
+   `beacon discord send --text "probe" --dry-run`
+2. Run real ping:
+   `beacon discord ping "probe" --webhook-url "..."`
 3. Verify Discord API status: https://status.discord.com
+4. Validate webhook URL still active in server Integrations.
 
 ### Problem: Listener mode reports "state file corrupted"
 

@@ -1171,6 +1171,39 @@ def cmd_discord_ping(args: argparse.Namespace) -> int:
     return 0
 
 
+
+
+def cmd_discord_listen(args: argparse.Namespace) -> int:
+    """Run lightweight Discord listener mode (poll/read path)."""
+    import asyncio
+    from .transports.discord import DiscordListener
+
+    listener = DiscordListener(
+        webhook_url=args.webhook_url,
+        poll_interval=int(args.poll_interval or 30),
+        state_file=args.state_file,
+        max_backlog=int(args.max_backlog or 100),
+        event_source_file=args.event_source,
+    )
+
+    seen = {"count": 0}
+
+    async def _on_event(event: Dict[str, Any]) -> None:
+        print(json.dumps(event, ensure_ascii=False))
+        seen["count"] += 1
+        if args.max_events and seen["count"] >= int(args.max_events):
+            listener.stop()
+
+    try:
+        asyncio.run(listener.start(_on_event))
+        return 0
+    except KeyboardInterrupt:
+        listener.stop()
+        return 0
+    except Exception as e:
+        print(json.dumps({"error": str(e)}), file=sys.stderr)
+        return 1
+
 def cmd_discord_send(args: argparse.Namespace) -> int:
     cfg = load_config()
     identity = _load_identity(args)
@@ -4871,6 +4904,15 @@ def main(argv: Optional[List[str]] = None) -> None:
     sp.add_argument("--dry-run", action="store_true")
     sp.add_argument("--password", default=None, help="Password for encrypted identity")
     sp.set_defaults(func=cmd_discord_send)
+
+    sp = dc_sub.add_parser("listen", help="Lightweight Discord listener (poll/read mode)")
+    sp.add_argument("--event-source", default=None, help="Path to JSONL event source file")
+    sp.add_argument("--poll-interval", type=int, default=30, help="Poll interval seconds (default: 30)")
+    sp.add_argument("--state-file", default=None, help="Persist listener cursor/state JSON")
+    sp.add_argument("--max-backlog", type=int, default=100, help="Max events per poll (default: 100)")
+    sp.add_argument("--max-events", type=int, default=0, help="Stop after N events (0 = run forever)")
+    sp.add_argument("--webhook-url", default=None, help="Reserved for future API listener mode")
+    sp.set_defaults(func=cmd_discord_listen)
 
 
     # Dashboard
