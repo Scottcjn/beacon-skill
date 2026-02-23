@@ -5,6 +5,14 @@ from beacon_skill.identity import AgentIdentity
 
 
 class TestCodec(unittest.TestCase):
+    def test_decode_envelopes_rejects_non_string(self) -> None:
+        with self.assertRaises(TypeError):
+            decode_envelopes([{"kind": "invalid"}])  # type: ignore[arg-type]
+
+    def test_verify_envelope_rejects_non_dict(self) -> None:
+        with self.assertRaises(TypeError):
+            verify_envelope("not a dict")  # type: ignore[arg-type]
+
     def test_encode_decode_roundtrip(self) -> None:
         payload = {"v": 1, "kind": "hello", "from": "a", "to": "b", "ts": 123}
         txt = f"hi\n\n{encode_envelope(payload, version=1)}\nbye"
