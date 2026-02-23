@@ -82,7 +82,7 @@ class TestRelayPingSecurity(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 400)
         payload = response.get_json()
-        self.assertIn("pubkey_hex is not valid hex", payload["error"])
+        self.assertIn("64 hex chars", payload["error"])
 
     def test_relay_ping_existing_agent_requires_relay_token(self) -> None:
         self._insert_existing_agent()
