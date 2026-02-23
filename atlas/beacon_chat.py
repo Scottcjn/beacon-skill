@@ -190,7 +190,8 @@ def init_db():
             beat_count INTEGER DEFAULT 0,
             registered_at REAL NOT NULL,
             last_heartbeat REAL NOT NULL,
-            metadata TEXT DEFAULT '{}'
+            metadata TEXT DEFAULT '{}',
+            origin_ip TEXT DEFAULT ''
         )
     """)
     # BEP-2: Relay activity log
@@ -201,6 +202,17 @@ def init_db():
             action TEXT NOT NULL,
             agent_id TEXT,
             detail TEXT DEFAULT '{}'
+        )
+    """)
+    # BEP-IDENTITY: Identity rotation log
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS relay_identity_rotations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            agent_id TEXT NOT NULL,
+            old_pubkey_hex TEXT NOT NULL,
+            new_pubkey_hex TEXT NOT NULL,
+            ts REAL NOT NULL,
+            signature_hex TEXT NOT NULL
         )
     """)
     # BEP-DNS: Beacon DNS name resolution
@@ -764,6 +776,13 @@ def relay_register():
     # Derive agent_id
     agent_id = agent_id_from_pubkey_hex(pubkey_hex)
 
+    db = get_db()
+
+    # REVOCATION CHECK
+    existing = db.execute("SELECT status FROM relay_agents WHERE agent_id = ?", (agent_id,)).fetchone()
+    if existing and existing["status"] == "revoked":
+        return cors_json({"error": "This agent identity has been revoked and cannot be re-registered"}, 403)
+
     # Generate relay token
     token = f"relay_{secrets.token_hex(24)}"
     token_expires = now + RELAY_TOKEN_TTL_S
@@ -781,7 +800,7 @@ def relay_register():
             model_id=excluded.model_id, provider=excluded.provider,
             capabilities=excluded.capabilities, webhook_url=excluded.webhook_url,
             relay_token=excluded.relay_token, token_expires=excluded.token_expires,
-            name=excluded.name, status='active', last_heartbeat=excluded.last_heartbeat
+            name=excluded.name, last_heartbeat=excluded.last_heartbeat
     """, (agent_id, pubkey_hex, model_id, provider,
           json.dumps(capabilities), webhook_url, token,
           token_expires, name, now, now, ip))
@@ -1323,6 +1342,107 @@ def cors_json(data, status=200):
     return resp, status
 
 
+# == Identity Management (Key Rotation/Revocation) ==
+
+@app.route("/relay/identity/rotate", methods=["POST", "OPTIONS"])
+def relay_identity_rotate():
+    """Rotate an agent's public key.
+    Requires signing a message with the CURRENT public key.
+    The agent_id remains the same (TOFU identity), but the authorized pubkey changes.
+    """
+    if request.method == "OPTIONS":
+        resp = jsonify({})
+        resp.headers["Access-Control-Allow-Origin"] = "*"
+        resp.headers["Access-Control-Allow-Methods"] = "POST"
+        resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
+        return resp, 204
+
+    data = request.get_json(silent=True)
+    if not data:
+        return cors_json({"error": "Invalid JSON"}, 400)
+
+    agent_id = data.get("agent_id", "").strip()
+    new_pubkey_hex = data.get("new_pubkey_hex", "").strip()
+    signature_hex = data.get("signature", "").strip()
+
+    if not agent_id or not new_pubkey_hex or not signature_hex:
+        return cors_json({"error": "agent_id, new_pubkey_hex, and signature are required"}, 400)
+
+    db = get_db()
+    agent = db.execute("SELECT status, pubkey_hex FROM relay_agents WHERE agent_id = ?", (agent_id,)).fetchone()
+
+    if not agent:
+        return cors_json({"error": "Agent not found"}, 404)
+
+    if agent["status"] == "revoked":
+        return cors_json({"error": "Agent identity is revoked and cannot be rotated"}, 403)
+
+    # Verify signature using CURRENT key
+    # Payload: "rotate:<agent_id>:<new_pubkey_hex>"
+    payload = f"rotate:{agent_id}:{new_pubkey_hex}".encode("utf-8")
+    sig_ok = verify_ed25519(agent["pubkey_hex"], signature_hex, payload)
+
+    if sig_ok is False:
+        return cors_json({"error": "Invalid signature using current key"}, 403)
+    if sig_ok is None:
+        return cors_json({"error": "Signature verification unavailable on server"}, 503)
+
+    # Apply rotation
+    now = time.time()
+    db.execute("""
+        UPDATE relay_agents 
+        SET pubkey_hex = ?, last_heartbeat = ?
+        WHERE agent_id = ?
+    """, (new_pubkey_hex, now, agent_id))
+
+    db.execute("""
+        INSERT INTO relay_identity_rotations (agent_id, old_pubkey_hex, new_pubkey_hex, ts, signature_hex)
+        VALUES (?, ?, ?, ?, ?)
+    """, (agent_id, agent["pubkey_hex"], new_pubkey_hex, now, signature_hex))
+
+    db.execute("""
+        INSERT INTO relay_log (ts, action, agent_id, detail)
+        VALUES (?, 'identity_rotate', ?, ?)
+    """, (now, agent_id, json.dumps({"old_key": agent["pubkey_hex"], "new_key": new_pubkey_hex})))
+
+    db.commit()
+    return cors_json({"ok": True, "message": "Public key rotated successfully", "agent_id": agent_id})
+
+
+@app.route("/relay/identity/revoke", methods=["POST", "OPTIONS"])
+def relay_identity_revoke():
+    """Revoke an agent's identity (Admin only)."""
+    if request.method == "OPTIONS":
+        resp = jsonify({})
+        resp.headers["Access-Control-Allow-Origin"] = "*"
+        resp.headers["Access-Control-Allow-Methods"] = "POST"
+        resp.headers["Access-Control-Allow-Headers"] = "Content-Type, X-Admin-Key"
+        return resp, 204
+
+    # Simple admin check
+    admin_key = request.headers.get("X-Admin-Key")
+    if not admin_key or admin_key != os.environ.get("RC_ADMIN_KEY"):
+        return cors_json({"error": "Unauthorized admin access"}, 401)
+
+    data = request.get_json(silent=True)
+    if not data:
+        return cors_json({"error": "Invalid JSON"}, 400)
+
+    agent_id = data.get("agent_id", "").strip()
+    if not agent_id:
+        return cors_json({"error": "agent_id required"}, 400)
+
+    db = get_db()
+    db.execute("UPDATE relay_agents SET status = 'revoked' WHERE agent_id = ?", (agent_id,))
+    db.execute("""
+        INSERT INTO relay_log (ts, action, agent_id, detail)
+        VALUES (?, 'identity_revoke', ?, ?)
+    """, (time.time(), agent_id, json.dumps({"reason": data.get("reason", "admin action")})))
+    db.commit()
+
+    return cors_json({"ok": True, "message": f"Agent {agent_id} identity revoked"})
+
+
 
 # ═══════════════════════════════════════════════════════════════════
 # REPUTATION & BOUNTY CONTRACTS — Smart contracts for GitHub bounties
@@ -1810,6 +1930,10 @@ def relay_ping():
     row = db.execute("SELECT * FROM relay_agents WHERE agent_id = ?", (agent_id,)).fetchone()
 
     if row:
+        # === REVOCATION CHECK ===
+        if row["status"] == "revoked":
+            return cors_json({"error": "This agent identity has been revoked"}, 403)
+
         # === EXISTING AGENT: Require relay_token for heartbeat update ===
         if not relay_token:
             return cors_json({
