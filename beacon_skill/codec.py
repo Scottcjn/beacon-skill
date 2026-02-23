@@ -137,6 +137,9 @@ def decode_envelopes(text: str) -> List[Dict[str, Any]]:
     Each returned dict includes the parsed JSON body.
     v2 envelopes include agent_id, nonce, sig fields.
     """
+    if not isinstance(text, str):
+        raise TypeError(f"decode_envelopes expects str, got {type(text).__name__}")
+
     out: List[Dict[str, Any]] = []
     idx = 0
     while True:
@@ -179,6 +182,9 @@ def verify_envelope(
 
     known_keys: dict mapping agent_id -> public_key_hex
     """
+    if not isinstance(envelope, dict):
+        raise TypeError(f"verify_envelope expects dict, got {type(envelope).__name__}")
+
     sig_hex = envelope.get("sig")
     if not sig_hex:
         return None  # v1 or unsigned
