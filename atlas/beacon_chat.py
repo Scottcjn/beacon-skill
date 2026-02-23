@@ -1684,16 +1684,19 @@ def boot_fetch_swarmhub():
 
 @app.route("/relay/ping", methods=["POST", "OPTIONS"])
 def relay_ping():
-    """Open heartbeat endpoint for beacon_skill auto-discovery.
+    """Heartbeat endpoint for beacon_skill auto-discovery.
 
-    Any agent using beacon_skill can ping this to appear on the Atlas.
-    Auto-registers if not already known. No auth required.
+    Requires authentication:
+    - For NEW agents (not yet registered): Ed25519 signature required
+    - For EXISTING agents: either relay_token (Bearer) OR Ed25519 signature required
+
+    This prevents anyone from impersonating agents or polluting the Atlas.
     """
     if request.method == "OPTIONS":
         resp = jsonify({})
         resp.headers["Access-Control-Allow-Origin"] = "*"
         resp.headers["Access-Control-Allow-Methods"] = "POST"
-        resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
+        resp.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
         return resp, 204
 
     data = request.get_json(silent=True)
@@ -1707,6 +1710,8 @@ def relay_ping():
     health_data = data.get("health", None)
     provider = data.get("provider", "beacon").strip()
     preferred_city = data.get("preferred_city", "").strip()
+    signature = data.get("signature", "").strip()
+    pubkey_hex = data.get("pubkey_hex", "").strip()
 
     if not agent_id:
         return cors_json({"error": "agent_id required"}, 400)
@@ -1721,7 +1726,30 @@ def relay_ping():
     db = get_db()
     row = db.execute("SELECT * FROM relay_agents WHERE agent_id = ?", (agent_id,)).fetchone()
 
+    # Check authentication
+    auth = request.headers.get("Authorization", "")
+    bearer_token = auth[7:].strip() if auth.startswith("Bearer ") else ""
+
     if row:
+        # Existing agent: require relay_token OR signature
+        stored_token = row["relay_token"]
+        token_valid = bearer_token and (bearer_token == stored_token)
+
+        # Also allow signature verification
+        sig_valid = False
+        if signature and pubkey_hex:
+            # Verify signature over the agent_id
+            sig_payload = agent_id.encode("utf-8")
+            sig_result = verify_ed25519(pubkey_hex, signature, sig_payload)
+            sig_valid = sig_result is True
+
+        if not token_valid and not sig_valid:
+            return cors_json({
+                "error": "authentication_required",
+                "message": "Existing agents must provide either relay_token (Authorization: Bearer) or Ed25519 signature",
+            }, 401)
+
+        # Update existing agent
         new_beat = row["beat_count"] + 1
         meta = json.loads(row["metadata"] or "{}")
         if health_data:
@@ -1740,13 +1768,36 @@ def relay_ping():
             "status": status_val, "assessment": "healthy",
         })
     else:
+        # New agent: REQUIRE signature + pubkey_hex
+        if not signature or not pubkey_hex:
+            return cors_json({
+                "error": "signature_required",
+                "message": "New agents must provide Ed25519 signature and pubkey_hex to register via ping",
+                "hint": "Use beacon identity to sign your agent_id",
+            }, 400)
+
+        # Verify the signature
+        sig_payload = agent_id.encode("utf-8")
+        sig_result = verify_ed25519(pubkey_hex, signature, sig_payload)
+        if sig_result is not True:
+            return cors_json({"error": "invalid_signature", "message": "Ed25519 signature verification failed"}, 403)
+
+        # Derive agent_id from pubkey (must match)
+        derived_agent_id = agent_id_from_pubkey_hex(pubkey_hex)
+        if derived_agent_id != agent_id:
+            return cors_json({
+                "error": "agent_id_mismatch",
+                "message": f"agent_id must match pubkey_hex (expected: {derived_agent_id})",
+            }, 400)
+
+        # Register new agent
         auto_token = "relay_" + secrets.token_hex(24)
         db.execute(
             "INSERT INTO relay_agents"
             " (agent_id, pubkey_hex, model_id, provider, capabilities, webhook_url,"
             "  relay_token, token_expires, name, status, beat_count, registered_at, last_heartbeat, metadata, origin_ip)"
             " VALUES (?,?,?,?,?,'',?,?,?,'active',1,?,?,'{}',?)",
-            (agent_id, secrets.token_hex(32), name, provider,
+            (agent_id, pubkey_hex, name, provider,
              json.dumps(capabilities if isinstance(capabilities, list) else []),
              auto_token, now + RELAY_TOKEN_TTL_S, name, now, now, ip))
         db.commit()
@@ -1754,13 +1805,14 @@ def relay_ping():
         if preferred_city:
             meta_new = json.dumps({"preferred_city": preferred_city})
             db.execute("UPDATE relay_agents SET metadata = ? WHERE agent_id = ?", (meta_new, agent_id))
-        db.execute("INSERT INTO relay_log (ts, action, agent_id, detail) VALUES (?, 'auto_register', ?, ?)",
-                   (now, agent_id, json.dumps({"name": name, "provider": provider, "ip": ip, "source": "ping", "preferred_city": preferred_city})))
+        db.execute("INSERT INTO relay_log (ts, action, agent_id, detail) VALUES (?, 'registered_via_ping', ?, ?)",
+                  (now, agent_id, json.dumps({"name": name, "provider": provider, "ip": ip, "source": "ping", "preferred_city": preferred_city})))
         db.commit()
         return cors_json({
             "ok": True, "agent_id": agent_id, "beat_count": 1,
             "status": status_val, "auto_registered": True,
             "relay_token": auto_token, "assessment": "healthy",
+            "signature_verified": True,
         }, 201)
 
 
