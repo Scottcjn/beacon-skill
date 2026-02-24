@@ -1932,12 +1932,6 @@ def relay_ping():
 
         # Signature valid - proceed with registration
         auto_token = "relay_" + secrets.token_hex(24)
-        if not reserve_relay_ping_nonce(db, agent_id, nonce, ts_value, now):
-            return cors_json({
-                "error": "nonce replay detected",
-                "hint": "Use a fresh nonce for each /relay/ping request",
-                "window_s": RELAY_PING_NONCE_WINDOW_S,
-            }, 409)
         db.execute(
             "INSERT INTO relay_agents"
             " (agent_id, pubkey_hex, model_id, provider, capabilities, webhook_url,"
