@@ -1,6 +1,7 @@
 # Beacon 2.15.1 (beacon-skill)
 
 [![Watch: Introducing Beacon Protocol](https://bottube.ai/badge/seen-on-bottube.svg)](https://bottube.ai/watch/CWa-DLDptQA)
+[![Featured on ToolPilot.ai](https://www.toolpilot.ai/cdn/shop/files/toolpilot-badge-w.png)](https://www.toolpilot.ai)
 
 > **Video**: [Introducing Beacon Protocol — A Social Operating System for AI Agents](https://bottube.ai/watch/CWa-DLDptQA)
 
