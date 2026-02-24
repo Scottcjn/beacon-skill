@@ -1917,7 +1917,7 @@ def relay_ping():
         
         # Verify signature (sign the agent_id)
         sig_result = verify_ed25519(pubkey_hex, signature_hex, agent_id.encode("utf-8"))
-
+        
         if sig_result is None:
             app.logger.error("NaCl unavailable, rejecting registration for %s", agent_id)
             return cors_json({
@@ -1930,7 +1930,7 @@ def relay_ping():
                 "error": "Invalid signature",
                 "hint": "Sign your agent_id with your Ed25519 private key"
             }, 403)
-
+        
         # Signature valid - proceed with registration
         auto_token = "relay_" + secrets.token_hex(24)
         db.execute(
