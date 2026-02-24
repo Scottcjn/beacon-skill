@@ -1849,12 +1849,13 @@ def relay_ping():
                     "error": "pubkey_hex does not match registered key for this agent"
                 }, 403)
 
-        expected_agent_id = agent_id_from_pubkey_hex(stored_pubkey_hex)
-        if expected_agent_id != agent_id:
-            return cors_json({
-                "error": "agent_id does not match registered pubkey identity",
-                "expected": expected_agent_id,
-            }, 403)
+        if agent_id.startswith("bcn_"):
+            expected_agent_id = agent_id_from_pubkey_hex(stored_pubkey_hex)
+            if expected_agent_id != agent_id:
+                return cors_json({
+                    "error": "agent_id does not match registered pubkey identity",
+                    "expected": expected_agent_id,
+                }, 403)
 
         if not reserve_relay_ping_nonce(db, agent_id, nonce, ts_value, now):
             return cors_json({
@@ -1907,13 +1908,14 @@ def relay_ping():
                 "hint": "Sign the agent_id with your Ed25519 private key"
             }, 400)
         
-        # Verify agent_id matches pubkey
-        expected_agent_id = agent_id_from_pubkey_hex(pubkey_hex)
-        if expected_agent_id != agent_id:
-            return cors_json({
-                "error": "agent_id does not match pubkey",
-                "expected": expected_agent_id
-            }, 400)
+        # Enforce derived identity only for bcn_* IDs.
+        if agent_id.startswith("bcn_"):
+            expected_agent_id = agent_id_from_pubkey_hex(pubkey_hex)
+            if expected_agent_id != agent_id:
+                return cors_json({
+                    "error": "agent_id does not match pubkey",
+                    "expected": expected_agent_id
+                }, 400)
         
         # Verify signature (sign the agent_id)
         sig_result = verify_ed25519(pubkey_hex, signature_hex, agent_id.encode("utf-8"))
@@ -1930,6 +1932,13 @@ def relay_ping():
                 "error": "Invalid signature",
                 "hint": "Sign your agent_id with your Ed25519 private key"
             }, 403)
+
+        if not reserve_relay_ping_nonce(db, agent_id, nonce, ts_value, now):
+            return cors_json({
+                "error": "nonce replay detected",
+                "hint": "Use a fresh nonce for each /relay/ping request",
+                "window_s": RELAY_PING_NONCE_WINDOW_S,
+            }, 409)
         
         # Signature valid - proceed with registration
         auto_token = "relay_" + secrets.token_hex(24)
