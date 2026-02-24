@@ -271,6 +271,15 @@ def init_db():
             signature_hex TEXT NOT NULL
         )
     """)
+    # BEP-DNS: Beacon DNS name resolution
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS beacon_dns (
+            name TEXT PRIMARY KEY,
+            agent_id TEXT NOT NULL,
+            owner TEXT DEFAULT '',
+            created_at REAL NOT NULL
+        )
+    """)
     # BEP-2: Replay-protection nonce log for /relay/ping
     conn.execute("""
         CREATE TABLE IF NOT EXISTS relay_ping_nonces (
@@ -279,15 +288,6 @@ def init_db():
             ts REAL NOT NULL,
             created_at REAL NOT NULL,
             PRIMARY KEY (agent_id, nonce)
-        )
-    """)
-    # BEP-DNS: Beacon DNS name resolution
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS beacon_dns (
-            name TEXT PRIMARY KEY,
-            agent_id TEXT NOT NULL,
-            owner TEXT DEFAULT '',
-            created_at REAL NOT NULL
         )
     """)
     conn.commit()
@@ -1930,15 +1930,14 @@ def relay_ping():
                 "hint": "Sign your agent_id with your Ed25519 private key"
             }, 403)
 
+        # Signature valid - proceed with registration
+        auto_token = "relay_" + secrets.token_hex(24)
         if not reserve_relay_ping_nonce(db, agent_id, nonce, ts_value, now):
             return cors_json({
                 "error": "nonce replay detected",
                 "hint": "Use a fresh nonce for each /relay/ping request",
                 "window_s": RELAY_PING_NONCE_WINDOW_S,
             }, 409)
-        
-        # Signature valid - proceed with registration
-        auto_token = "relay_" + secrets.token_hex(24)
         db.execute(
             "INSERT INTO relay_agents"
             " (agent_id, pubkey_hex, model_id, provider, capabilities, webhook_url,"
