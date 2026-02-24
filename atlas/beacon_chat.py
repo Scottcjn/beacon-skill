@@ -46,6 +46,8 @@ RELAY_SILENCE_THRESHOLD_S = 900     # 15 min = silent
 RELAY_DEAD_THRESHOLD_S = 3600       # 1 hour = presumed dead
 RELAY_REGISTER_COOLDOWN_S = 10      # Rate limit registration
 RELAY_HEARTBEAT_COOLDOWN_S = 60     # Min seconds between heartbeats per agent
+RELAY_PING_NONCE_WINDOW_S = 300     # Max clock skew + replay window
+RELAY_PING_NONCE_MAX_LEN = 128      # Bound nonce payload size
 
 KNOWN_PROVIDERS = {
     "xai": "xAI (Grok)",
@@ -128,6 +130,62 @@ def assess_relay_status(last_heartbeat_ts):
     return "presumed_dead"
 
 
+def parse_relay_ping_nonce(data, now):
+    """Validate and normalize nonce/timestamp fields for /relay/ping."""
+    nonce_raw = data.get("nonce", "")
+    if isinstance(nonce_raw, (int, float)):
+        nonce_raw = str(nonce_raw)
+    if not isinstance(nonce_raw, str):
+        return None, None, cors_json({"error": "nonce must be a string"}, 400)
+
+    nonce = nonce_raw.strip()
+    if not nonce:
+        return None, None, cors_json({
+            "error": "nonce required",
+            "hint": "Include a unique nonce per /relay/ping request",
+        }, 400)
+    if len(nonce) > RELAY_PING_NONCE_MAX_LEN:
+        return None, None, cors_json({
+            "error": f"nonce too long (max {RELAY_PING_NONCE_MAX_LEN} chars)",
+        }, 400)
+
+    ts_raw = data.get("ts")
+    if ts_raw is None:
+        return None, None, cors_json({
+            "error": "ts required",
+            "hint": "Include unix timestamp seconds in ts",
+        }, 400)
+
+    try:
+        ts_value = float(ts_raw)
+    except (TypeError, ValueError):
+        return None, None, cors_json({"error": "ts must be a unix timestamp number"}, 400)
+
+    if abs(now - ts_value) > RELAY_PING_NONCE_WINDOW_S:
+        return None, None, cors_json({
+            "error": "timestamp outside accepted window",
+            "window_s": RELAY_PING_NONCE_WINDOW_S,
+        }, 400)
+
+    return nonce, ts_value, None
+
+
+def reserve_relay_ping_nonce(db, agent_id, nonce, ts_value, now):
+    """Reserve nonce for replay window. Returns False if nonce already seen."""
+    db.execute(
+        "DELETE FROM relay_ping_nonces WHERE created_at < ?",
+        (now - RELAY_PING_NONCE_WINDOW_S,),
+    )
+    try:
+        db.execute(
+            "INSERT INTO relay_ping_nonces (agent_id, nonce, ts, created_at) VALUES (?, ?, ?, ?)",
+            (agent_id, nonce, ts_value, now),
+        )
+    except sqlite3.IntegrityError:
+        return False
+    return True
+
+
 SEED_CONTRACTS = [
     ("ctr_001", "rent", "bcn_sophia_elya", "bcn_builder_fred", 25, "RTC", "active", "30d"),
     ("ctr_002", "buy", "bcn_deep_seeker", "bcn_auto_janitor", 500, "RTC", "active", "perpetual"),
@@ -200,6 +258,16 @@ def init_db():
             action TEXT NOT NULL,
             agent_id TEXT,
             detail TEXT DEFAULT '{}'
+        )
+    """)
+    # BEP-2: Replay-protection nonce log for /relay/ping
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS relay_ping_nonces (
+            agent_id TEXT NOT NULL,
+            nonce TEXT NOT NULL,
+            ts REAL NOT NULL,
+            created_at REAL NOT NULL,
+            PRIMARY KEY (agent_id, nonce)
         )
     """)
     # BEP-DNS: Beacon DNS name resolution
@@ -1706,6 +1774,9 @@ def relay_ping():
 
     ip = get_real_ip()
     now = time.time()
+    nonce, ts_value, nonce_error = parse_relay_ping_nonce(data, now)
+    if nonce_error is not None:
+        return nonce_error
 
     db = get_db()
     row = db.execute("SELECT * FROM relay_agents WHERE agent_id = ?", (agent_id,)).fetchone()
@@ -1730,6 +1801,56 @@ def relay_ping():
                 "error": "relay_token expired",
                 "hint": "Re-register to get a new token"
             }, 403)
+
+        stored_pubkey_hex = (row["pubkey_hex"] or "").strip()
+        if not stored_pubkey_hex:
+            return cors_json({
+                "error": "Stored identity key missing",
+                "hint": "Re-register this agent to restore identity binding",
+            }, 403)
+
+        if len(stored_pubkey_hex) != 64:
+            return cors_json({
+                "error": "Stored identity key invalid",
+                "hint": "Re-register this agent to restore identity binding",
+            }, 403)
+        try:
+            bytes.fromhex(stored_pubkey_hex)
+        except ValueError:
+            return cors_json({
+                "error": "Stored identity key invalid",
+                "hint": "Re-register this agent to restore identity binding",
+            }, 403)
+
+        if pubkey_hex:
+            if len(pubkey_hex) != 64:
+                return cors_json({
+                    "error": "pubkey_hex must be 64 hex chars (32 bytes Ed25519)"
+                }, 400)
+            try:
+                bytes.fromhex(pubkey_hex)
+            except ValueError:
+                return cors_json({
+                    "error": "pubkey_hex is not valid hex"
+                }, 400)
+            if pubkey_hex != stored_pubkey_hex:
+                return cors_json({
+                    "error": "pubkey_hex does not match registered key for this agent"
+                }, 403)
+
+        expected_agent_id = agent_id_from_pubkey_hex(stored_pubkey_hex)
+        if expected_agent_id != agent_id:
+            return cors_json({
+                "error": "agent_id does not match registered pubkey identity",
+                "expected": expected_agent_id,
+            }, 403)
+
+        if not reserve_relay_ping_nonce(db, agent_id, nonce, ts_value, now):
+            return cors_json({
+                "error": "nonce replay detected",
+                "hint": "Use a fresh nonce for each /relay/ping request",
+                "window_s": RELAY_PING_NONCE_WINDOW_S,
+            }, 409)
         
         # Token valid - proceed with heartbeat update
         new_beat = row["beat_count"] + 1
@@ -1756,6 +1877,18 @@ def relay_ping():
                 "error": "pubkey_hex required for new agent registration",
                 "hint": "Include your Ed25519 public key"
             }, 400)
+
+        if len(pubkey_hex) != 64:
+            return cors_json({
+                "error": "pubkey_hex must be 64 hex chars (32 bytes Ed25519)"
+            }, 400)
+
+        try:
+            bytes.fromhex(pubkey_hex)
+        except ValueError:
+            return cors_json({
+                "error": "pubkey_hex is not valid hex"
+            }, 400)
         
         if not signature_hex:
             return cors_json({
@@ -1764,7 +1897,7 @@ def relay_ping():
             }, 400)
         
         # Verify agent_id matches pubkey
-        expected_agent_id = agent_id_from_pubkey(pubkey_hex)
+        expected_agent_id = agent_id_from_pubkey_hex(pubkey_hex)
         if expected_agent_id != agent_id:
             return cors_json({
                 "error": "agent_id does not match pubkey",
@@ -1779,10 +1912,20 @@ def relay_ping():
                 "error": "Invalid signature",
                 "hint": "Sign your agent_id with your Ed25519 private key"
             }, 403)
-        
+
         if sig_result is None:
-            # NaCl not available - log warning but allow (server config issue)
-            app.logger.warning(f"NaCl unavailable, accepting unsigned registration for {agent_id}")
+            app.logger.error("NaCl unavailable, rejecting registration for %s", agent_id)
+            return cors_json({
+                "error": "Signature verification unavailable",
+                "hint": "Server missing Ed25519 verification support"
+            }, 503)
+
+        if not reserve_relay_ping_nonce(db, agent_id, nonce, ts_value, now):
+            return cors_json({
+                "error": "nonce replay detected",
+                "hint": "Use a fresh nonce for each /relay/ping request",
+                "window_s": RELAY_PING_NONCE_WINDOW_S,
+            }, 409)
         
         # Signature valid - proceed with registration
         auto_token = "relay_" + secrets.token_hex(24)
@@ -1815,4 +1958,3 @@ def relay_ping():
 if __name__ == "__main__":
     boot_fetch_swarmhub()
     app.run(host="127.0.0.1", port=8071, debug=False)
-
