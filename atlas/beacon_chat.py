@@ -260,6 +260,17 @@ def init_db():
             detail TEXT DEFAULT '{}'
         )
     """)
+    # BEP-IDENTITY: Identity rotation log
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS relay_identity_rotations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            agent_id TEXT NOT NULL,
+            old_pubkey_hex TEXT NOT NULL,
+            new_pubkey_hex TEXT NOT NULL,
+            ts REAL NOT NULL,
+            signature_hex TEXT NOT NULL
+        )
+    """)
     # BEP-2: Replay-protection nonce log for /relay/ping
     conn.execute("""
         CREATE TABLE IF NOT EXISTS relay_ping_nonces (
@@ -1906,19 +1917,18 @@ def relay_ping():
         
         # Verify signature (sign the agent_id)
         sig_result = verify_ed25519(pubkey_hex, signature_hex, agent_id.encode("utf-8"))
-        
-        if sig_result is False:
-            return cors_json({
-                "error": "Invalid signature",
-                "hint": "Sign your agent_id with your Ed25519 private key"
-            }, 403)
-
         if sig_result is None:
             app.logger.error("NaCl unavailable, rejecting registration for %s", agent_id)
             return cors_json({
                 "error": "Signature verification unavailable",
                 "hint": "Server missing Ed25519 verification support"
             }, 503)
+
+        if sig_result is False:
+            return cors_json({
+                "error": "Invalid signature",
+                "hint": "Sign your agent_id with your Ed25519 private key"
+            }, 403)
 
         if not reserve_relay_ping_nonce(db, agent_id, nonce, ts_value, now):
             return cors_json({
