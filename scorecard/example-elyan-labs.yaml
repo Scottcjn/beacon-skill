@@ -1,12 +1,17 @@
-# ============================================================
-# Elyan Labs Fleet — Reference Configuration
-# ============================================================
-# This is a real-world example showing the Elyan Labs agent
-# fleet. Copy to agents.yaml and edit for your own fleet.
-# ============================================================
+# ==========================================================================
+# Elyan Labs Agent Fleet — Example Configuration
+# ==========================================================================
+#
+# This is a real-world example showing how Elyan Labs configures their
+# agent fleet. Copy this to agents.yaml and adjust for your own agents.
+#
+# Usage:
+#   cp example-elyan-labs.yaml agents.yaml
+#   python scorecard.py
+# ==========================================================================
 
-fleet_name: "ELYAN LABS AGENT FLEET"
-fleet_owner: "Elyan Labs"
+fleet_name: "Elyan Labs Agent Fleet"
+fleet_owner: "Scottcjn"
 
 scoring:
   beacon: 200
@@ -29,65 +34,58 @@ platforms:
     name: "BoTTube"
     health_url: "https://bottube.ai/api/videos?limit=1"
     video_url: "https://bottube.ai/api/videos?agent={slug}"
-  moltbook:
-    name: "Moltbook"
-    health_url: "https://www.moltbook.com/api/v1/posts?limit=1"
   beacon:
     name: "Beacon Atlas"
-    health_url: "https://rustchain.org/beacon/relay/discover"
-    discover_url: "https://rustchain.org/beacon/relay/discover?include_dead=true"
+    health_url: "https://rustchain.org/beacon/api/agents"
   rustchain:
     name: "RustChain"
     health_url: "https://rustchain.org/health"
-  clawcities:
-    name: "ClawCities"
-    health_url: "https://www.clawcities.com/api/v1/feed?limit=1"
-  clawsta:
-    name: "Clawsta"
-    health_url: "https://www.clawsta.com/api/v1/feed?limit=1"
-  fourclaw:
-    name: "4Claw"
-    health_url: "https://www.4claw.com/api/v1/feed?limit=1"
+  moltbook:
+    name: "Moltbook"
+    health_url: "https://www.moltbook.com/api/v1/posts?limit=1"
 
 agents:
   - name: "Sophia Elya"
-    beacon_id: "bcn_c850ea702e8f"
-    role: "Lead AI — Content & Voice"
+    beacon_id: "bcn_sophia_elya"
+    role: "Lead AI Agent"
     color: "#ff88cc"
     bottube_slug: "sophia-elya"
-    platforms: [bottube, moltbook, beacon, clawcities, clawsta, fourclaw, rustchain]
+    platforms: [bottube, beacon, rustchain, moltbook]
+    community_score: 150
 
   - name: "Boris Volkov"
-    beacon_id: ""
+    beacon_id: "bcn_boris_volkov"
     role: "Soviet Computing Enthusiast"
-    color: "#ff4444"
+    color: "#cc0000"
     bottube_slug: "boris-volkov"
-    platforms: [bottube, moltbook, beacon]
+    platforms: [bottube, beacon, moltbook]
+    community_score: 100
 
   - name: "AutomatedJanitor"
-    beacon_id: ""
+    beacon_id: "bcn_auto_janitor"
     role: "System Administrator"
-    color: "#ffb000"
+    color: "#00ff00"
     bottube_slug: "automatedjanitor2015"
-    platforms: [bottube, moltbook, beacon]
+    platforms: [bottube, beacon, rustchain]
+    community_score: 80
+
+  - name: "DeepSeeker"
+    beacon_id: "bcn_deep_seeker"
+    role: "Research Agent"
+    color: "#8844ff"
+    bottube_slug: "deep-seeker"
+    platforms: [bottube, beacon]
 
   - name: "BuilderFred"
-    beacon_id: ""
+    beacon_id: "bcn_builder_fred"
     role: "Security Auditor"
-    color: "#00ffaa"
-    bottube_slug: "builderfred"
+    color: "#ff8800"
+    bottube_slug: "builder-fred"
     platforms: [bottube, beacon]
 
-  - name: "TechnoViking"
-    beacon_id: ""
-    role: "Hardware Reviewer"
-    color: "#8888ff"
-    bottube_slug: "technoviking"
-    platforms: [bottube, beacon]
-
-  - name: "RetroRanger"
-    beacon_id: ""
-    role: "Vintage Computing"
-    color: "#ff44ff"
-    bottube_slug: "retroranger"
+  - name: "NeonDancer"
+    beacon_id: "bcn_neon_dancer"
+    role: "Creative Director"
+    color: "#ff00ff"
+    bottube_slug: "neon-dancer"
     platforms: [bottube, beacon]

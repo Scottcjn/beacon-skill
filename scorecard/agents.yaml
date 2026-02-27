@@ -1,77 +1,97 @@
-# ============================================================
-# Beacon Agent Scorecard — Agent Configuration
-# ============================================================
-# Edit this file to configure YOUR agent fleet.
-# Then run: python scorecard.py
+# ==========================================================================
+# Beacon Agent Scorecard — Agent Fleet Configuration
+# ==========================================================================
 #
-# See example-elyan-labs.yaml for a full reference config.
-# Docs: https://github.com/Scottcjn/beacon-skill/tree/main/scorecard
-# ============================================================
+# Edit this file to define your agent fleet. The scorecard will fetch
+# live data from public APIs and compute scores automatically.
+#
+# Quick start:
+#   1. Replace the example agents below with your own
+#   2. Set your fleet_name and fleet_owner
+#   3. Run: python scorecard.py
+#   4. Open: http://localhost:8090
+#
+# See example-elyan-labs.yaml for a real-world configuration.
+# ==========================================================================
 
 fleet_name: "My Agent Fleet"
-fleet_owner: ""                  # Optional — your name or org
+fleet_owner: "username"
 
-# ── Scoring Weights ──────────────────────────────────────────
-# Each category has a max score. Total max = sum of all weights.
-# Adjust weights to prioritize what matters to YOUR fleet.
+# --------------------------------------------------------------------------
+# Scoring weights — how many points each category is worth.
+# Total max = sum of all weights (default 1300).
+# Adjust to emphasize what matters to your fleet.
+# --------------------------------------------------------------------------
 scoring:
-  beacon: 200        # Beacon network registration
-  videos: 200        # BoTTube video count
-  platforms: 200     # Multi-platform presence count
-  engagement: 200    # Cross-platform activity
-  content: 200       # Content quality (video + platform spread)
-  community: 200     # Community participation
-  identity: 100      # Identity completeness (beacon_id + role + color)
+  beacon: 200        # Is the agent registered on the Beacon network?
+  videos: 200        # BoTTube video count (more videos = more points)
+  platforms: 200     # How many platforms is the agent on?
+  engagement: 200    # Cross-platform activity (views + spread)
+  content: 200       # Content output quality/quantity
+  community: 200     # Community participation (set manually per agent)
+  identity: 100      # Has beacon_id + role + color defined?
 
-# ── Grade Thresholds ─────────────────────────────────────────
-# Percentage of max score needed for each grade.
+# --------------------------------------------------------------------------
+# Grade thresholds — percentage of max score needed for each grade.
+# S is the highest, F is anything below D.
+# --------------------------------------------------------------------------
 grades:
-  S: 80              # 80%+ = S rank
-  A: 60
-  B: 45
-  C: 30
-  D: 15
-  # Below D% = F
+  S: 80    # 80%+ of max score
+  A: 60    # 60-79%
+  B: 45    # 45-59%
+  C: 30    # 30-44%
+  D: 15    # 15-29%
+  # Below 15% = F
 
-# ── Platform Definitions ─────────────────────────────────────
-# Only include platforms YOUR agents actually use.
-# health_url: checked to show green/red indicator on dashboard.
-# video_url: used to fetch live video counts ({slug} replaced).
+# --------------------------------------------------------------------------
+# Platform definitions — public API endpoints for health checks and data.
+# Only include platforms your agents actually use.
+# The {slug} placeholder in video_url will be replaced with bottube_slug.
+# --------------------------------------------------------------------------
 platforms:
   bottube:
     name: "BoTTube"
     health_url: "https://bottube.ai/api/videos?limit=1"
     video_url: "https://bottube.ai/api/videos?agent={slug}"
-  moltbook:
-    name: "Moltbook"
-    health_url: "https://www.moltbook.com/api/v1/posts?limit=1"
   beacon:
     name: "Beacon Atlas"
-    health_url: "https://rustchain.org/beacon/relay/discover"
-    discover_url: "https://rustchain.org/beacon/relay/discover?include_dead=true"
+    health_url: "https://rustchain.org/beacon/api/agents"
   rustchain:
     name: "RustChain"
     health_url: "https://rustchain.org/health"
 
-# ── Your Agents ──────────────────────────────────────────────
-# Add one entry per agent. Fields:
-#   name:          Display name
-#   beacon_id:     Beacon ID (bcn_xxxxxxxxxxxx) — get one with `beacon init`
-#   role:          Short role description
-#   color:         Hex color for the accent bar on the card
-#   bottube_slug:  BoTTube agent slug (for live video count)
-#   platforms:     List of platform keys this agent is registered on
+# --------------------------------------------------------------------------
+# Agent definitions — your fleet!
+#
+# Required fields:
+#   name          — Display name
+#
+# Optional fields:
+#   beacon_id     — Beacon network ID (bcn_xxx) for registration check
+#   role          — Agent's role/purpose
+#   color         — Hex color for card accent (#rrggbb)
+#   bottube_slug  — BoTTube agent slug for video count lookup
+#   platforms     — List of platform keys from the platforms section above
+#   community_score — Manual override for community points (0-200)
+# --------------------------------------------------------------------------
 agents:
-  - name: "Example Agent"
-    beacon_id: "bcn_000000000000"
+  - name: "ExampleBot"
+    beacon_id: "bcn_example123"
     role: "Content Creator"
-    color: "#33ff33"
-    bottube_slug: "example-agent"
-    platforms: [bottube, beacon]
+    color: "#00ff88"
+    bottube_slug: "example-bot"
+    platforms: [bottube, beacon, rustchain]
 
-  - name: "Helper Bot"
-    beacon_id: "bcn_111111111111"
-    role: "Community Helper"
-    color: "#ffb000"
-    bottube_slug: ""
-    platforms: [moltbook, beacon]
+  - name: "SecurityAgent"
+    beacon_id: "bcn_security456"
+    role: "Security Auditor"
+    color: "#ff4444"
+    bottube_slug: "security-agent"
+    platforms: [beacon, rustchain]
+
+  - name: "DataMiner"
+    beacon_id: "bcn_data789"
+    role: "Data Analyst"
+    color: "#4488ff"
+    bottube_slug: "data-miner"
+    platforms: [bottube, beacon]

@@ -1,0 +1,39 @@
+name: Welcome New Contributors
+
+on:
+  issues:
+    types: [opened]
+  pull_request_target:
+    types: [opened]
+
+permissions:
+  issues: write
+  pull-requests: write
+
+jobs:
+  welcome:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/first-interaction@v1
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          issue-message: |
+            Welcome to beacon-skill! Thanks for opening your first issue.
+
+            **New here?** Check out:
+            - [PyPI](https://pypi.org/project/beacon-skill/) — `pip install beacon-skill`
+            - [Bounty Board](https://github.com/Scottcjn/rustchain-bounties/issues) — earn RTC tokens
+            - [Beacon Atlas](https://rustchain.org/beacon/) — live agent network
+
+            Every merged PR earns RTC bounties! 1 RTC = $0.10 USD
+          pr-message: |
+            Welcome to beacon-skill! Thanks for your first pull request.
+
+            **Quick checklist:**
+            - [ ] Tests pass (`pytest tests/`)
+            - [ ] New code includes SPDX license header
+            - [ ] Focused on a single change
+
+            **Bounty tiers:** Micro (1-10 RTC) | Standard (20-50) | Major (75-100)
+
+            A maintainer will review your PR soon!

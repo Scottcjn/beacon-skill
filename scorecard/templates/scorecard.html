@@ -1,510 +1,746 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{{ fleet_name }} — Beacon Scorecard</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=VT323&family=IBM+Plex+Mono:wght@400;600&display=swap" rel="stylesheet">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{{ status.fleet_name }} — Beacon Scorecard</title>
 <style>
-/* ── Reset & Variables ─────────────────────────── */
-*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+/* ========================================================================
+   CRT Terminal Theme — green phosphor on black
+   ======================================================================== */
+
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Share+Tech+Mono&display=swap');
 
 :root {
-  --green: #33ff33;
-  --green-dim: #1a8c1a;
-  --green-glow: #00ff0044;
-  --amber: #ffb000;
-  --amber-dim: #996a00;
-  --amber-glow: #ffb00033;
-  --red: #ff4444;
-  --cyan: #00ffff;
-  --gold: #ffd700;
-  --pink: #ff88cc;
-  --purple: #8888ff;
-  --bg-dark: #0a0a0a;
-  --bg-card: #0d1117;
-  --bg-terminal: #000800;
-  --border: #1a331a;
-  --text-dim: #668866;
-  --text-body: #a0c8a0;
-  --font-mono: 'IBM Plex Mono', 'Courier New', monospace;
-  --font-display: 'VT323', monospace;
+    --bg: #0a0a0a;
+    --bg-card: #0d1117;
+    --bg-card-hover: #111a25;
+    --phosphor: #00ff41;
+    --phosphor-dim: #00cc33;
+    --phosphor-bright: #33ff66;
+    --text: #b0ffb0;
+    --text-dim: #4a7a4a;
+    --border: #1a3a1a;
+    --border-bright: #00ff41;
+    --scanline: rgba(0, 255, 65, 0.03);
+    --glow: 0 0 10px rgba(0, 255, 65, 0.3);
+    --glow-strong: 0 0 20px rgba(0, 255, 65, 0.5);
+
+    /* Grade colors */
+    --grade-s: #ffd700;
+    --grade-a: #00ff41;
+    --grade-b: #4488ff;
+    --grade-c: #ffcc00;
+    --grade-d: #ff8800;
+    --grade-f: #ff2222;
+
+    /* Score bar colors */
+    --bar-beacon: #00e5ff;
+    --bar-videos: #ff6ec7;
+    --bar-platforms: #ffd700;
+    --bar-engagement: #7c4dff;
+    --bar-content: #00e676;
+    --bar-community: #ff9100;
+    --bar-identity: #448aff;
 }
 
-html { font-size: 14px; }
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
 body {
-  background: var(--bg-dark);
-  color: var(--text-body);
-  font-family: var(--font-mono);
-  line-height: 1.5;
-  min-height: 100vh;
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'JetBrains Mono', 'Share Tech Mono', 'Courier New', monospace;
+    font-size: 14px;
+    line-height: 1.5;
+    min-height: 100vh;
+    overflow-x: hidden;
 }
 
-/* ── CRT Effects ───────────────────────────────── */
-.scanlines {
-  position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-  pointer-events: none; z-index: 9999;
-  background: repeating-linear-gradient(
-    0deg,
-    rgba(0,0,0,0.12) 0px,
-    rgba(0,0,0,0.12) 1px,
-    transparent 1px,
-    transparent 3px
-  );
-}
-.crt-vignette {
-  position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-  pointer-events: none; z-index: 9998;
-  background: radial-gradient(ellipse at center, transparent 60%, rgba(0,0,0,0.35) 100%);
+/* Scanline overlay */
+body::before {
+    content: '';
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: repeating-linear-gradient(
+        0deg,
+        transparent,
+        transparent 2px,
+        var(--scanline) 2px,
+        var(--scanline) 4px
+    );
+    pointer-events: none;
+    z-index: 9999;
 }
 
-/* ── Layout ────────────────────────────────────── */
-.terminal {
-  max-width: 1200px;
-  margin: 0 auto;
-  padding: 20px 24px 40px;
+/* CRT vignette */
+body::after {
+    content: '';
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: radial-gradient(
+        ellipse at center,
+        transparent 60%,
+        rgba(0,0,0,0.4) 100%
+    );
+    pointer-events: none;
+    z-index: 9998;
 }
 
-/* ── Header ────────────────────────────────────── */
+/* ========================================================================
+   Layout
+   ======================================================================== */
+
+.container {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 20px;
+}
+
+/* ========================================================================
+   Header
+   ======================================================================== */
+
 .header {
-  text-align: center;
-  padding: 24px 0 20px;
-  border-bottom: 1px solid var(--border);
-  margin-bottom: 24px;
+    text-align: center;
+    padding: 30px 0 20px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 20px;
 }
+
 .header h1 {
-  font-family: var(--font-display);
-  font-size: 2.4rem;
-  color: var(--amber);
-  text-shadow: 0 0 20px var(--amber-glow);
-  letter-spacing: 4px;
-  margin-bottom: 4px;
+    font-size: 28px;
+    color: var(--phosphor);
+    text-shadow: var(--glow-strong);
+    letter-spacing: 4px;
+    text-transform: uppercase;
+    margin-bottom: 6px;
 }
+
 .header .subtitle {
-  font-family: var(--font-display);
-  font-size: 1.1rem;
-  color: var(--text-dim);
-  letter-spacing: 2px;
-}
-.header .meta {
-  margin-top: 8px;
-  font-size: 0.85rem;
-  color: var(--text-dim);
-}
-.header .meta span { margin: 0 10px; }
-.tag {
-  display: inline-block;
-  padding: 1px 8px;
-  border: 1px solid var(--border);
-  border-radius: 3px;
-  font-size: 0.8rem;
-  color: var(--green);
-  margin: 0 3px;
+    color: var(--text-dim);
+    font-size: 12px;
+    letter-spacing: 2px;
 }
 
-/* ── Section Title ─────────────────────────────── */
-.section-title {
-  font-family: var(--font-display);
-  font-size: 1.3rem;
-  color: var(--amber);
-  letter-spacing: 3px;
-  border-bottom: 1px solid var(--border);
-  padding-bottom: 8px;
-  margin-bottom: 16px;
+.header .fleet-stats {
+    margin-top: 12px;
+    display: flex;
+    justify-content: center;
+    gap: 30px;
+    font-size: 13px;
 }
 
-/* ── Network Stats ─────────────────────────────── */
-.net-bar {
-  display: flex;
-  gap: 12px;
-  flex-wrap: wrap;
-  margin-bottom: 24px;
-}
-.stat-box {
-  flex: 1;
-  min-width: 120px;
-  background: rgba(51,255,51,0.03);
-  border: 1px solid var(--border);
-  padding: 12px 14px;
-  text-align: center;
-  border-radius: 4px;
-}
-.stat-label {
-  font-size: 0.75rem;
-  color: var(--text-dim);
-  letter-spacing: 1px;
-  text-transform: uppercase;
-  margin-bottom: 4px;
-}
-.stat-value {
-  font-family: var(--font-display);
-  font-size: 1.5rem;
-  color: var(--green);
-  text-shadow: 0 0 8px var(--green-glow);
+.header .fleet-stats .stat {
+    color: var(--phosphor-dim);
 }
 
-/* ── Platform Health ───────────────────────────── */
-.ph-row {
-  display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
-  margin-bottom: 28px;
-}
-.ph-card {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  background: rgba(51,255,51,0.03);
-  border: 1px solid var(--border);
-  padding: 8px 14px;
-  border-radius: 4px;
-  font-size: 0.85rem;
-}
-.status-dot {
-  display: inline-block;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-}
-.status-dot.green { background: var(--green); box-shadow: 0 0 6px var(--green); }
-.status-dot.red   { background: var(--red); box-shadow: 0 0 6px var(--red); }
-.pulse { animation: pulse 2s ease-in-out infinite; }
-@keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.4; }
+.header .fleet-stats .stat .val {
+    color: var(--phosphor);
+    text-shadow: var(--glow);
+    font-weight: 700;
 }
 
-/* ── Agent Cards Grid ──────────────────────────── */
-.agents-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
-  gap: 16px;
-  margin-bottom: 32px;
+/* ========================================================================
+   Network Status Bar
+   ======================================================================== */
+
+.network-bar {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 10px 16px;
+    margin-bottom: 16px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 20px;
+    align-items: center;
+    font-size: 12px;
 }
+
+.network-bar .label {
+    color: var(--text-dim);
+    margin-right: 4px;
+}
+
+.network-bar .value {
+    color: var(--phosphor);
+    text-shadow: var(--glow);
+}
+
+/* ========================================================================
+   Platform Health Row
+   ======================================================================== */
+
+.platform-health {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-bottom: 24px;
+}
+
+.platform-chip {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 6px 14px;
+    font-size: 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.health-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    display: inline-block;
+}
+
+.health-dot.up {
+    background: #00ff41;
+    box-shadow: 0 0 6px #00ff41;
+}
+
+.health-dot.down {
+    background: #ff2222;
+    box-shadow: 0 0 6px #ff2222;
+}
+
+/* ========================================================================
+   Agent Grid
+   ======================================================================== */
+
+.agent-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
+    gap: 16px;
+    margin-bottom: 30px;
+}
+
+/* ========================================================================
+   Agent Card
+   ======================================================================== */
 
 .agent-card {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 16px;
-  position: relative;
-  overflow: hidden;
-  transition: border-color 0.2s, box-shadow 0.2s;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 16px;
+    transition: border-color 0.3s, box-shadow 0.3s;
+    position: relative;
+    overflow: hidden;
 }
+
 .agent-card:hover {
-  border-color: var(--green-dim);
-  box-shadow: 0 0 15px rgba(51,255,51,0.08);
-}
-.accent-bar {
-  position: absolute; top: 0; left: 0; right: 0; height: 3px;
+    border-color: var(--border-bright);
+    box-shadow: var(--glow);
+    background: var(--bg-card-hover);
 }
 
-/* Card header row */
+/* Top accent bar */
+.agent-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 2px;
+    background: var(--agent-color, var(--phosphor));
+    box-shadow: 0 0 8px var(--agent-color, var(--phosphor));
+}
+
 .card-header {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 12px;
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    margin-bottom: 12px;
 }
+
 .agent-icon {
-  width: 40px; height: 40px;
-  border-radius: 6px;
-  display: flex; align-items: center; justify-content: center;
-  font-family: var(--font-display);
-  font-size: 1.6rem;
-  color: #000;
-  font-weight: bold;
-  flex-shrink: 0;
-}
-.card-info { flex: 1; min-width: 0; }
-.agent-name {
-  font-family: var(--font-display);
-  font-size: 1.15rem;
-  color: var(--green);
-  letter-spacing: 1px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.agent-role {
-  font-size: 0.75rem;
-  color: var(--text-dim);
+    width: 40px;
+    height: 40px;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--bg);
+    flex-shrink: 0;
+    text-shadow: none;
 }
 
-/* Grade badge */
+.card-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.card-info .agent-name {
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--phosphor-bright);
+    text-shadow: var(--glow);
+    margin-bottom: 2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.card-info .agent-role {
+    font-size: 11px;
+    color: var(--text-dim);
+    letter-spacing: 1px;
+}
+
+.card-info .beacon-id {
+    font-size: 10px;
+    color: var(--text-dim);
+    opacity: 0.6;
+    font-family: monospace;
+}
+
+/* Grade Badge */
 .grade-badge {
-  width: 42px; height: 42px;
-  border: 2px solid;
-  border-radius: 6px;
-  display: flex; align-items: center; justify-content: center;
-  font-family: var(--font-display);
-  font-size: 1.6rem;
-  font-weight: bold;
-  flex-shrink: 0;
-}
-.grade-S { color: var(--gold);  border-color: var(--gold);  background: rgba(255,215,0,0.1);  text-shadow: 0 0 8px rgba(255,215,0,0.4); }
-.grade-A { color: var(--green); border-color: var(--green); background: rgba(51,255,51,0.1);  text-shadow: 0 0 8px var(--green-glow); }
-.grade-B { color: var(--cyan);  border-color: var(--cyan);  background: rgba(0,255,255,0.1);  text-shadow: 0 0 8px rgba(0,255,255,0.3); }
-.grade-C { color: var(--amber); border-color: var(--amber); background: rgba(255,176,0,0.1);  text-shadow: 0 0 8px var(--amber-glow); }
-.grade-D { color: var(--text-dim); border-color: var(--text-dim); background: rgba(102,136,102,0.08); }
-.grade-F { color: var(--red);   border-color: var(--red);   background: rgba(255,68,68,0.08); }
-
-/* Score summary row */
-.score-summary {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 10px;
-  padding-bottom: 8px;
-  border-bottom: 1px solid var(--border);
-}
-.score-total {
-  font-family: var(--font-display);
-  font-size: 1.1rem;
-  color: var(--green);
-}
-.score-pct {
-  font-size: 0.8rem;
-  color: var(--text-dim);
+    width: 48px;
+    height: 48px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 24px;
+    font-weight: 700;
+    flex-shrink: 0;
+    border: 2px solid;
+    text-shadow: none;
 }
 
-/* Score breakdown bars */
-.score-bars { margin-bottom: 10px; }
-.score-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 4px;
-}
-.score-cat {
-  width: 80px;
-  font-size: 0.7rem;
-  color: var(--text-dim);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  text-align: right;
-  flex-shrink: 0;
-}
-.bar-track {
-  flex: 1;
-  height: 6px;
-  background: rgba(51,255,51,0.06);
-  border-radius: 3px;
-  overflow: hidden;
-}
-.bar-fill {
-  height: 100%;
-  border-radius: 3px;
-  transition: width 0.6s ease-out;
-}
-.bar-fill.green  { background: var(--green); box-shadow: 0 0 4px var(--green-glow); }
-.bar-fill.amber  { background: var(--amber); }
-.bar-fill.red    { background: var(--red); }
-.bar-fill.cyan   { background: var(--cyan); }
-.bar-fill.gold   { background: var(--gold); }
-.bar-fill.pink   { background: var(--pink); }
-.bar-fill.purple { background: var(--purple); }
-.score-val {
-  width: 30px;
-  font-size: 0.7rem;
-  color: var(--text-dim);
-  text-align: right;
-  flex-shrink: 0;
+.grade-S { background: rgba(255,215,0,0.15); border-color: var(--grade-s); color: var(--grade-s); box-shadow: 0 0 12px rgba(255,215,0,0.3); }
+.grade-A { background: rgba(0,255,65,0.12); border-color: var(--grade-a); color: var(--grade-a); box-shadow: 0 0 12px rgba(0,255,65,0.3); }
+.grade-B { background: rgba(68,136,255,0.12); border-color: var(--grade-b); color: var(--grade-b); box-shadow: 0 0 12px rgba(68,136,255,0.3); }
+.grade-C { background: rgba(255,204,0,0.12); border-color: var(--grade-c); color: var(--grade-c); box-shadow: 0 0 12px rgba(255,204,0,0.3); }
+.grade-D { background: rgba(255,136,0,0.12); border-color: var(--grade-d); color: var(--grade-d); box-shadow: 0 0 12px rgba(255,136,0,0.3); }
+.grade-F { background: rgba(255,34,34,0.12); border-color: var(--grade-f); color: var(--grade-f); box-shadow: 0 0 12px rgba(255,34,34,0.3); }
+
+/* Score display */
+.score-line {
+    font-size: 12px;
+    color: var(--text-dim);
+    margin-bottom: 8px;
 }
 
-/* Card footer */
-.card-footer {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  align-items: center;
-}
-.platform-badge {
-  display: inline-block;
-  padding: 1px 7px;
-  border: 1px solid var(--border);
-  border-radius: 3px;
-  font-size: 0.7rem;
-  color: var(--text-dim);
-}
-.video-count {
-  font-family: var(--font-display);
-  font-size: 0.9rem;
-  color: var(--cyan);
-  margin-left: auto;
-}
-.beacon-id {
-  font-size: 0.7rem;
-  color: var(--text-dim);
-  opacity: 0.6;
-  margin-top: 6px;
-  font-family: var(--font-mono);
+.score-line .score-value {
+    color: var(--phosphor);
+    font-weight: 700;
 }
 
-/* ── Footer ────────────────────────────────────── */
+/* Score breakdown bar */
+.score-bar-container {
+    margin-bottom: 10px;
+}
+
+.score-bar {
+    height: 14px;
+    background: rgba(255,255,255,0.04);
+    border-radius: 3px;
+    display: flex;
+    overflow: hidden;
+    border: 1px solid var(--border);
+}
+
+.score-segment {
+    height: 100%;
+    transition: width 0.5s ease;
+    position: relative;
+}
+
+.score-segment:hover {
+    filter: brightness(1.4);
+}
+
+.score-segment.beacon   { background: var(--bar-beacon); }
+.score-segment.videos   { background: var(--bar-videos); }
+.score-segment.platforms { background: var(--bar-platforms); }
+.score-segment.engagement { background: var(--bar-engagement); }
+.score-segment.content  { background: var(--bar-content); }
+.score-segment.community { background: var(--bar-community); }
+.score-segment.identity { background: var(--bar-identity); }
+
+/* Score bar legend */
+.score-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 10px;
+    margin-top: 6px;
+    font-size: 10px;
+}
+
+.legend-item {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    color: var(--text-dim);
+}
+
+.legend-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 2px;
+    display: inline-block;
+}
+
+.legend-dot.beacon   { background: var(--bar-beacon); }
+.legend-dot.videos   { background: var(--bar-videos); }
+.legend-dot.platforms { background: var(--bar-platforms); }
+.legend-dot.engagement { background: var(--bar-engagement); }
+.legend-dot.content  { background: var(--bar-content); }
+.legend-dot.community { background: var(--bar-community); }
+.legend-dot.identity { background: var(--bar-identity); }
+
+/* Stats row */
+.card-stats {
+    display: flex;
+    gap: 14px;
+    margin-bottom: 10px;
+    font-size: 11px;
+}
+
+.card-stats .stat-item {
+    color: var(--text-dim);
+}
+
+.card-stats .stat-val {
+    color: var(--phosphor-dim);
+    font-weight: 700;
+}
+
+/* Platform badges */
+.platform-badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.plat-badge {
+    font-size: 10px;
+    padding: 2px 8px;
+    border-radius: 3px;
+    background: rgba(0,255,65,0.08);
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    letter-spacing: 1px;
+    text-transform: uppercase;
+}
+
+/* ========================================================================
+   Footer
+   ======================================================================== */
+
 .footer {
-  text-align: center;
-  padding: 20px 0;
-  border-top: 1px solid var(--border);
-  font-size: 0.8rem;
-  color: var(--text-dim);
-}
-.footer a {
-  color: var(--green-dim);
-  text-decoration: none;
-}
-.footer a:hover {
-  color: var(--green);
-  text-shadow: 0 0 6px var(--green-glow);
-}
-.refresh-info {
-  font-size: 0.75rem;
-  color: var(--text-dim);
-  opacity: 0.5;
-  margin-top: 6px;
+    border-top: 1px solid var(--border);
+    padding: 20px 0;
+    text-align: center;
+    font-size: 11px;
+    color: var(--text-dim);
 }
 
-/* ── Responsive ────────────────────────────────── */
-@media (max-width: 600px) {
-  .terminal { padding: 12px; }
-  .header h1 { font-size: 1.6rem; letter-spacing: 2px; }
-  .agents-grid { grid-template-columns: 1fr; }
-  .net-bar { flex-direction: column; }
+.footer a {
+    color: var(--phosphor-dim);
+    text-decoration: none;
+    transition: color 0.2s;
+}
+
+.footer a:hover {
+    color: var(--phosphor);
+    text-shadow: var(--glow);
+}
+
+.footer .links {
+    display: flex;
+    justify-content: center;
+    gap: 24px;
+    margin-bottom: 8px;
+}
+
+/* Refresh indicator */
+.refresh-indicator {
+    position: fixed;
+    bottom: 16px;
+    right: 16px;
+    font-size: 10px;
+    color: var(--text-dim);
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 4px 10px;
+    z-index: 100;
+}
+
+.refresh-indicator.loading {
+    color: var(--phosphor);
+    border-color: var(--phosphor-dim);
+}
+
+/* ========================================================================
+   Responsive
+   ======================================================================== */
+
+@media (max-width: 768px) {
+    .container { padding: 12px; }
+    .header h1 { font-size: 20px; letter-spacing: 2px; }
+    .header .fleet-stats { flex-direction: column; gap: 6px; }
+    .agent-grid { grid-template-columns: 1fr; }
+    .network-bar { flex-direction: column; gap: 8px; }
+    .footer .links { flex-direction: column; gap: 8px; }
+}
+
+@media (max-width: 440px) {
+    .agent-card { padding: 12px; }
+    .grade-badge { width: 40px; height: 40px; font-size: 20px; }
+    .score-legend { font-size: 9px; }
+}
+
+/* ========================================================================
+   Animations
+   ======================================================================== */
+
+@keyframes flicker {
+    0%, 100% { opacity: 1; }
+    92% { opacity: 1; }
+    93% { opacity: 0.8; }
+    94% { opacity: 1; }
+}
+
+.header h1 {
+    animation: flicker 8s infinite;
+}
+
+@keyframes glow-pulse {
+    0%, 100% { box-shadow: 0 0 6px currentColor; }
+    50% { box-shadow: 0 0 14px currentColor; }
+}
+
+.grade-badge {
+    animation: glow-pulse 3s ease-in-out infinite;
 }
 </style>
 </head>
 <body>
 
-<div class="scanlines"></div>
-<div class="crt-vignette"></div>
+<div class="container">
 
-<div class="terminal">
-
-  <!-- ── Header ──────────────────────────────── -->
-  <div class="header">
-    <h1>{{ fleet_name }}</h1>
-    <div class="subtitle">BEACON AGENT SCORECARD</div>
-    <div class="meta">
-      <span class="tag">{{ agents|length }} AGENT{{ 'S' if agents|length != 1 }}</span>
-      <span class="tag">{{ platforms|length }} PLATFORM{{ 'S' if platforms|length != 1 }}</span>
-      {% if fleet_owner %}<span class="tag">{{ fleet_owner }}</span>{% endif %}
-    </div>
-  </div>
-
-  <!-- ── Network Stats ───────────────────────── -->
-  <div class="section-title">// NETWORK STATUS</div>
-  <div class="net-bar">
-    <div class="stat-box">
-      <div class="stat-label">Epoch</div>
-      <div class="stat-value">{{ network.epoch }}</div>
-    </div>
-    <div class="stat-box">
-      <div class="stat-label">Slot</div>
-      <div class="stat-value">{{ network.slot }}</div>
-    </div>
-    <div class="stat-box">
-      <div class="stat-label">Miners</div>
-      <div class="stat-value">{{ network.miners }}</div>
-    </div>
-    <div class="stat-box">
-      <div class="stat-label">Beacon Agents</div>
-      <div class="stat-value">{{ beacon_count }}</div>
-    </div>
-    <div class="stat-box">
-      <div class="stat-label">Version</div>
-      <div class="stat-value" style="font-size:1rem">{{ network.version }}</div>
-    </div>
-  </div>
-
-  <!-- ── Platform Health ─────────────────────── -->
-  <div class="section-title">// PLATFORM HEALTH</div>
-  <div class="ph-row">
-    {% for pid, p in platforms.items() %}
-    <div class="ph-card">
-      <span class="status-dot {{ 'green pulse' if p.up else 'red' }}"></span>
-      <span>{{ p.name }}</span>
-    </div>
-    {% endfor %}
-  </div>
-
-  <!-- ── Agent Score Cards ───────────────────── -->
-  <div class="section-title">// AGENT SCORECARDS</div>
-  <div class="agents-grid">
-    {% for agent in agents %}
-    {% set colors = ['green','amber','cyan','gold','pink','purple','red'] %}
-    {% set bar_colors = ['green','amber','cyan','gold','pink','purple','green'] %}
-    <div class="agent-card">
-      <div class="accent-bar" style="background:{{ agent.color|default('#33ff33') }}"></div>
-
-      <div class="card-header">
-        <div class="agent-icon" style="background:{{ agent.color|default('#33ff33') }}">
-          {{ agent.name[0]|upper }}
+    <!-- Header -->
+    <div class="header">
+        <h1>{{ status.fleet_name }}</h1>
+        <div class="subtitle">
+            BEACON AGENT SCORECARD
+            {% if status.fleet_owner %} // {{ status.fleet_owner }}{% endif %}
         </div>
-        <div class="card-info">
-          <div class="agent-name">{{ agent.name }}</div>
-          <div class="agent-role">{{ agent.role|default('Agent') }}</div>
+        <div class="fleet-stats">
+            <div class="stat">AGENTS: <span class="val">{{ status.agent_count }}</span></div>
+            <div class="stat">PLATFORMS: <span class="val">{{ status.platform_health | length }}</span></div>
+            <div class="stat">BEACON NETWORK: <span class="val">{{ status.network.beacon_agent_count }} agents</span></div>
         </div>
-        <div class="grade-badge grade-{{ agent.grade }}">{{ agent.grade }}</div>
-      </div>
+    </div>
 
-      <div class="score-summary">
-        <span class="score-total">{{ agent.total }} / {{ agent.max }}</span>
-        <span class="score-pct">{{ agent.pct }}%</span>
-      </div>
-
-      <div class="score-bars">
-        {% for cat, val in agent.scores.items() %}
-        {% set max_for_cat = scoring_weights.get(cat, 200) %}
-        {% set pct = (val / max_for_cat * 100) if max_for_cat > 0 else 0 %}
-        <div class="score-row">
-          <span class="score-cat">{{ cat }}</span>
-          <div class="bar-track">
-            <div class="bar-fill {{ bar_colors[loop.index0 % bar_colors|length] }}" style="width:{{ pct|round|int }}%"></div>
-          </div>
-          <span class="score-val">{{ val }}</span>
-        </div>
-        {% endfor %}
-      </div>
-
-      <div class="card-footer">
-        {% for p in agent.platforms|default([]) %}
-        <span class="platform-badge">{{ p }}</span>
-        {% endfor %}
-        {% if agent.video_count is defined and agent.video_count > 0 %}
-        <span class="video-count">{{ agent.video_count }} videos</span>
+    <!-- Network Status Bar -->
+    <div class="network-bar" id="network-bar">
+        {% if status.network.rustchain %}
+        {% set rc = status.network.rustchain %}
+        {% if rc.get('ok') %}
+        <div><span class="label">RUSTCHAIN</span> <span class="value">v{{ rc.get('version', '?') }}</span></div>
+        <div><span class="label">UPTIME</span> <span class="value">{{ (rc.get('uptime_s', 0) / 3600) | round(1) }}h</span></div>
+        {% else %}
+        <div><span class="label">RUSTCHAIN</span> <span class="value" style="color: var(--text-dim);">offline</span></div>
         {% endif %}
-      </div>
-
-      {% if agent.beacon_id %}
-      <div class="beacon-id">{{ agent.beacon_id }}</div>
-      {% endif %}
+        {% endif %}
+        <div><span class="label">BEACON AGENTS</span> <span class="value">{{ status.network.beacon_agent_count }}</span></div>
+        <div><span class="label">UPDATED</span> <span class="value" id="update-time">just now</span></div>
     </div>
-    {% endfor %}
-  </div>
 
-  <!-- ── Footer ──────────────────────────────── -->
-  <div class="footer">
-    <a href="https://rustchain.org" target="_blank">rustchain.org</a> &middot;
-    <a href="https://bottube.ai" target="_blank">bottube.ai</a> &middot;
-    <a href="https://github.com/Scottcjn/beacon-skill" target="_blank">beacon-skill</a>
-    <div class="refresh-info" id="refresh-info">Auto-refresh in 60s</div>
-  </div>
+    <!-- Platform Health -->
+    <div class="platform-health">
+        {% for key, ph in status.platform_health.items() %}
+        <div class="platform-chip">
+            <span class="health-dot {{ 'up' if ph.healthy else 'down' }}"></span>
+            {{ ph.name }}
+        </div>
+        {% endfor %}
+    </div>
 
+    <!-- Agent Cards Grid -->
+    <div class="agent-grid" id="agent-grid">
+        {% for agent in status.agents %}
+        <div class="agent-card" style="--agent-color: {{ agent.color }};">
+            <div class="card-header">
+                <div class="agent-icon" style="background: {{ agent.color }};">
+                    {{ agent.name[0] | upper }}
+                </div>
+                <div class="card-info">
+                    <div class="agent-name">{{ agent.name }}</div>
+                    <div class="agent-role">{{ agent.role }}</div>
+                    {% if agent.beacon_id %}
+                    <div class="beacon-id">{{ agent.beacon_id }}</div>
+                    {% endif %}
+                </div>
+                <div class="grade-badge grade-{{ agent.grade }}">{{ agent.grade }}</div>
+            </div>
+
+            <div class="score-line">
+                Score: <span class="score-value">{{ agent.total_score }}</span> / {{ agent.max_score }}
+                (<span class="score-value">{{ agent.score_pct }}%</span>)
+            </div>
+
+            <!-- Score Breakdown Bar -->
+            <div class="score-bar-container">
+                <div class="score-bar">
+                    {% set max_total = agent.max_score if agent.max_score > 0 else 1 %}
+                    {% for cat in ['beacon', 'videos', 'platforms', 'engagement', 'content', 'community', 'identity'] %}
+                    {% set pts = agent.scores.get(cat, 0) %}
+                    {% if pts > 0 %}
+                    <div class="score-segment {{ cat }}"
+                         style="width: {{ (pts / max_total * 100) | round(1) }}%;"
+                         title="{{ cat | capitalize }}: {{ pts }}pts"></div>
+                    {% endif %}
+                    {% endfor %}
+                </div>
+                <div class="score-legend">
+                    {% for cat in ['beacon', 'videos', 'platforms', 'engagement', 'content', 'community', 'identity'] %}
+                    {% set pts = agent.scores.get(cat, 0) %}
+                    {% if pts > 0 %}
+                    <div class="legend-item">
+                        <span class="legend-dot {{ cat }}"></span>
+                        {{ cat[:3] | upper }} {{ pts }}
+                    </div>
+                    {% endif %}
+                    {% endfor %}
+                </div>
+            </div>
+
+            <!-- Stats -->
+            <div class="card-stats">
+                <div class="stat-item">VIDEOS: <span class="stat-val">{{ agent.video_count }}</span></div>
+                <div class="stat-item">VIEWS: <span class="stat-val">{{ agent.total_views }}</span></div>
+            </div>
+
+            <!-- Platform Badges -->
+            <div class="platform-badges">
+                {% for p in agent.platforms %}
+                <span class="plat-badge">{{ p }}</span>
+                {% endfor %}
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+
+    <!-- Footer -->
+    <div class="footer">
+        <div class="links">
+            <a href="https://rustchain.org" target="_blank">RustChain.org</a>
+            <a href="https://bottube.ai" target="_blank">BoTTube.ai</a>
+            <a href="https://rustchain.org/beacon/" target="_blank">Beacon Atlas</a>
+            <a href="https://github.com/Scottcjn/beacon-skill" target="_blank">beacon-skill</a>
+        </div>
+        <div>Beacon Agent Scorecard v1.0 // Self-Hostable Fleet Monitor</div>
+    </div>
+</div>
+
+<!-- Refresh indicator -->
+<div class="refresh-indicator" id="refresh-indicator">
+    Auto-refresh: <span id="countdown">60</span>s
 </div>
 
 <script>
 (function() {
-  var countdown = 60;
-  var el = document.getElementById('refresh-info');
-  setInterval(function() {
-    countdown--;
-    if (countdown <= 0) {
-      location.reload();
-      countdown = 60;
+    var REFRESH_INTERVAL = 60;
+    var countdown = REFRESH_INTERVAL;
+    var countdownEl = document.getElementById('countdown');
+    var indicatorEl = document.getElementById('refresh-indicator');
+
+    function formatTime(ts) {
+        var d = new Date(ts * 1000);
+        return d.toLocaleTimeString();
     }
-    el.textContent = 'Auto-refresh in ' + countdown + 's';
-  }, 1000);
+
+    function updateCountdown() {
+        countdown--;
+        if (countdownEl) countdownEl.textContent = countdown;
+        if (countdown <= 0) {
+            refreshData();
+            countdown = REFRESH_INTERVAL;
+        }
+    }
+
+    function refreshData() {
+        indicatorEl.classList.add('loading');
+        indicatorEl.querySelector('#countdown').textContent = '...';
+
+        fetch('/api/status')
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                // Update network bar
+                var nb = document.getElementById('network-bar');
+                var updateTime = document.getElementById('update-time');
+                if (updateTime) updateTime.textContent = formatTime(data.timestamp);
+
+                // Rebuild agent cards
+                var grid = document.getElementById('agent-grid');
+                var html = '';
+                var categories = ['beacon','videos','platforms','engagement','content','community','identity'];
+                var catLabels = {'beacon':'BCN','videos':'VID','platforms':'PLT','engagement':'ENG','content':'CON','community':'COM','identity':'IDN'};
+
+                data.agents.forEach(function(agent) {
+                    var maxTotal = agent.max_score || 1;
+                    var segmentsHtml = '';
+                    var legendHtml = '';
+                    categories.forEach(function(cat) {
+                        var pts = agent.scores[cat] || 0;
+                        if (pts > 0) {
+                            var w = (pts / maxTotal * 100).toFixed(1);
+                            segmentsHtml += '<div class="score-segment ' + cat + '" style="width:' + w + '%" title="' + cat + ': ' + pts + 'pts"></div>';
+                            legendHtml += '<div class="legend-item"><span class="legend-dot ' + cat + '"></span>' + catLabels[cat] + ' ' + pts + '</div>';
+                        }
+                    });
+
+                    var platHtml = '';
+                    (agent.platforms || []).forEach(function(p) {
+                        platHtml += '<span class="plat-badge">' + p + '</span>';
+                    });
+
+                    html += '<div class="agent-card" style="--agent-color:' + agent.color + ';">'
+                        + '<div class="card-header">'
+                        + '<div class="agent-icon" style="background:' + agent.color + ';">' + agent.name.charAt(0).toUpperCase() + '</div>'
+                        + '<div class="card-info">'
+                        + '<div class="agent-name">' + agent.name + '</div>'
+                        + '<div class="agent-role">' + agent.role + '</div>'
+                        + (agent.beacon_id ? '<div class="beacon-id">' + agent.beacon_id + '</div>' : '')
+                        + '</div>'
+                        + '<div class="grade-badge grade-' + agent.grade + '">' + agent.grade + '</div>'
+                        + '</div>'
+                        + '<div class="score-line">Score: <span class="score-value">' + agent.total_score + '</span> / ' + agent.max_score
+                        + ' (<span class="score-value">' + agent.score_pct + '%</span>)</div>'
+                        + '<div class="score-bar-container"><div class="score-bar">' + segmentsHtml + '</div>'
+                        + '<div class="score-legend">' + legendHtml + '</div></div>'
+                        + '<div class="card-stats">'
+                        + '<div class="stat-item">VIDEOS: <span class="stat-val">' + agent.video_count + '</span></div>'
+                        + '<div class="stat-item">VIEWS: <span class="stat-val">' + agent.total_views + '</span></div>'
+                        + '</div>'
+                        + '<div class="platform-badges">' + platHtml + '</div>'
+                        + '</div>';
+                });
+                grid.innerHTML = html;
+
+                // Update platform health
+                // (full page refresh on platform changes is fine for simplicity)
+
+                indicatorEl.classList.remove('loading');
+                countdown = REFRESH_INTERVAL;
+            })
+            .catch(function(err) {
+                console.error('Refresh error:', err);
+                indicatorEl.classList.remove('loading');
+                countdown = REFRESH_INTERVAL;
+            });
+    }
+
+    setInterval(updateCountdown, 1000);
 })();
 </script>
 

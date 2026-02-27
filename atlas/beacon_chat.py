@@ -14,6 +14,7 @@ import time
 import json
 import uuid
 import sqlite3
+from collections import OrderedDict
 import requests as http_requests
 from flask import Flask, request, jsonify, g
 
@@ -111,7 +112,7 @@ def agent_id_from_pubkey_hex(pubkey_hex):
 def verify_ed25519(pubkey_hex, signature_hex, data_bytes):
     """Verify Ed25519 signature. Returns True/False, or None if nacl unavailable."""
     if not HAS_NACL:
-        return None  # Cannot verify — accept on trust
+        return None  # Cannot verify in this runtime
     try:
         vk = VerifyKey(bytes.fromhex(pubkey_hex))
         vk.verify(data_bytes, bytes.fromhex(signature_hex))
@@ -247,7 +248,8 @@ def init_db():
             beat_count INTEGER DEFAULT 0,
             registered_at REAL NOT NULL,
             last_heartbeat REAL NOT NULL,
-            metadata TEXT DEFAULT '{}'
+            metadata TEXT DEFAULT '{}',
+            origin_ip TEXT DEFAULT ''
         )
     """)
     # BEP-2: Relay activity log
@@ -307,8 +309,84 @@ def init_db():
 init_db()
 
 # --- Rate limiting ---
-RATE_LIMIT = {}  # ip -> last_request_time
-RATE_LIMIT_SECONDS = 3  # min seconds between requests per IP
+READ_LIMIT_PER_MIN = int(os.getenv("ATLAS_READ_RATE_LIMIT", "30"))
+WRITE_LIMIT_PER_MIN = int(os.getenv("ATLAS_WRITE_RATE_LIMIT", "10"))
+RATE_LIMIT_WINDOW_SECONDS = 60
+RATE_LIMIT_TTL_SECONDS = int(os.getenv("ATLAS_RATE_LIMIT_TTL", "900"))
+RATE_LIMIT_MAX_ENTRIES = int(os.getenv("ATLAS_RATE_LIMIT_MAX_ENTRIES", "10000"))
+RATE_LIMIT_CLEANUP_INTERVAL_SECONDS = int(os.getenv("ATLAS_RATE_LIMIT_CLEANUP_INTERVAL", "30"))
+
+
+class BoundedRateLimiter:
+    """Per-key fixed-window rate limiter with bounded, TTL-cleaned storage."""
+
+    def __init__(self, *, max_entries=10000, ttl_seconds=900, cleanup_interval_seconds=30):
+        self.max_entries = max_entries
+        self.ttl_seconds = ttl_seconds
+        self.cleanup_interval_seconds = cleanup_interval_seconds
+        self._entries = OrderedDict()  # key -> {window_start, count, last_seen}
+        self._last_cleanup = 0.0
+
+    def _cleanup(self, now):
+        stale_before = now - self.ttl_seconds
+        stale_keys = [k for k, v in self._entries.items() if v["last_seen"] < stale_before]
+        for key in stale_keys:
+            self._entries.pop(key, None)
+
+        while len(self._entries) > self.max_entries:
+            self._entries.popitem(last=False)
+
+    def allow(self, key, limit, *, window_seconds=60, now=None):
+        now = time.time() if now is None else now
+        if now - self._last_cleanup >= self.cleanup_interval_seconds:
+            self._cleanup(now)
+            self._last_cleanup = now
+
+        record = self._entries.get(key)
+        if record is None:
+            self._entries[key] = {"window_start": now, "count": 1, "last_seen": now}
+            self._entries.move_to_end(key)
+            return True
+
+        if now - record["window_start"] >= window_seconds:
+            record["window_start"] = now
+            record["count"] = 1
+            record["last_seen"] = now
+            self._entries.move_to_end(key)
+            return True
+
+        if record["count"] >= limit:
+            record["last_seen"] = now
+            self._entries.move_to_end(key)
+            return False
+
+        record["count"] += 1
+        record["last_seen"] = now
+        self._entries.move_to_end(key)
+        return True
+
+
+ATLAS_RATE_LIMITER = BoundedRateLimiter(
+    max_entries=RATE_LIMIT_MAX_ENTRIES,
+    ttl_seconds=RATE_LIMIT_TTL_SECONDS,
+    cleanup_interval_seconds=RATE_LIMIT_CLEANUP_INTERVAL_SECONDS,
+)
+
+
+def _read_limit_per_min():
+    return int(app.config.get("RATE_LIMIT_READ_PER_MIN", READ_LIMIT_PER_MIN))
+
+
+def _write_limit_per_min():
+    return int(app.config.get("RATE_LIMIT_WRITE_PER_MIN", WRITE_LIMIT_PER_MIN))
+
+
+def enforce_rate_limit(bucket, limit, error_message="Rate limited. Try again shortly."):
+    ip = get_real_ip() or "unknown"
+    key = f"{bucket}:{ip}"
+    if not ATLAS_RATE_LIMITER.allow(key, limit, window_seconds=RATE_LIMIT_WINDOW_SECONDS):
+        return cors_json({"error": error_message}, 429)
+    return None
 
 # --- LLM Configuration ---
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434/api/chat")
@@ -483,12 +561,9 @@ def chat():
         resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
         return resp, 204
 
-    # Rate limit
-    ip = get_real_ip()
-    now = time.time()
-    if ip in RATE_LIMIT and (now - RATE_LIMIT[ip]) < RATE_LIMIT_SECONDS:
-        return cors_json({"error": "Rate limited. Wait a moment."}, 429)
-    RATE_LIMIT[ip] = now
+    rl = enforce_rate_limit("api_chat_write", _write_limit_per_min())
+    if rl:
+        return rl
 
     data = request.get_json(silent=True)
     if not data:
@@ -556,6 +631,10 @@ def list_contracts():
         resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
         return resp, 204
 
+    rl = enforce_rate_limit("api_contracts_read", _read_limit_per_min())
+    if rl:
+        return rl
+
     db = get_db()
     rows = db.execute("SELECT * FROM contracts ORDER BY created_at DESC").fetchall()
     contracts = []
@@ -572,12 +651,11 @@ def list_contracts():
 
 @app.route("/api/contracts", methods=["POST"])
 def create_contract():
-    ip = get_real_ip()
-    now = time.time()
-    if ip in RATE_LIMIT and (now - RATE_LIMIT[ip]) < RATE_LIMIT_SECONDS:
-        return cors_json({"error": "Rate limited. Wait a moment."}, 429)
-    RATE_LIMIT[ip] = now
+    rl = enforce_rate_limit("api_contracts_write", _write_limit_per_min())
+    if rl:
+        return rl
 
+    now = time.time()
     data = request.get_json(silent=True)
     if not data:
         return cors_json({"error": "Invalid JSON"}, 400)
@@ -651,6 +729,10 @@ def update_contract(contract_id):
         resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
         return resp, 204
 
+    rl = enforce_rate_limit("api_contracts_write_patch", _write_limit_per_min())
+    if rl:
+        return rl
+
     data = request.get_json(silent=True)
     if not data:
         return cors_json({"error": "Invalid JSON"}, 400)
@@ -673,9 +755,6 @@ def update_contract(contract_id):
 # ═══════════════════════════════════════════════════════════════════
 # BEP-2: External Agent Relay — Cross-Model Bridging
 # ═══════════════════════════════════════════════════════════════════
-
-RELAY_RATE_LIMIT = {}  # ip -> last_register_time
-
 
 @app.route("/relay/register", methods=["POST", "OPTIONS"])
 def relay_register():
@@ -700,12 +779,18 @@ def relay_register():
         resp.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
         return resp, 204
 
-    # Rate limit registration
-    ip = get_real_ip()
+    rl = enforce_rate_limit("relay_register_write", _write_limit_per_min())
+    if rl:
+        return rl
+
+    ip = get_real_ip() or "unknown"
     now = time.time()
-    if ip in RELAY_RATE_LIMIT and (now - RELAY_RATE_LIMIT[ip]) < RELAY_REGISTER_COOLDOWN_S:
+    if not ATLAS_RATE_LIMITER.allow(
+        f"relay_register:{ip}",
+        1,
+        window_seconds=RELAY_REGISTER_COOLDOWN_S,
+    ):
         return cors_json({"error": "Rate limited — wait before registering again"}, 429)
-    RELAY_RATE_LIMIT[ip] = now
 
     data = request.get_json(silent=True)
     if not data:
@@ -757,11 +842,24 @@ def relay_register():
             "pubkey_hex": pubkey_hex,
         }, sort_keys=True, separators=(",", ":")).encode("utf-8")
         sig_verified = verify_ed25519(pubkey_hex, signature, reg_payload)
+        if sig_verified is None:
+            app.logger.error("NaCl unavailable, rejecting signed registration for pubkey %s", pubkey_hex[:16])
+            return cors_json({
+                "error": "Signature verification unavailable",
+                "hint": "Server missing Ed25519 verification support (PyNaCl)"
+            }, 503)
         if sig_verified is False:
             return cors_json({"error": "Invalid Ed25519 signature"}, 403)
 
     # Derive agent_id
     agent_id = agent_id_from_pubkey_hex(pubkey_hex)
+
+    db = get_db()
+
+    # REVOCATION CHECK
+    existing = db.execute("SELECT status FROM relay_agents WHERE agent_id = ?", (agent_id,)).fetchone()
+    if existing and existing["status"] == "revoked":
+        return cors_json({"error": "This agent identity has been revoked and cannot be re-registered"}, 403)
 
     # Generate relay token
     token = f"relay_{secrets.token_hex(24)}"
@@ -780,7 +878,7 @@ def relay_register():
             model_id=excluded.model_id, provider=excluded.provider,
             capabilities=excluded.capabilities, webhook_url=excluded.webhook_url,
             relay_token=excluded.relay_token, token_expires=excluded.token_expires,
-            name=excluded.name, status='active', last_heartbeat=excluded.last_heartbeat
+            name=excluded.name, last_heartbeat=excluded.last_heartbeat
     """, (agent_id, pubkey_hex, model_id, provider,
           json.dumps(capabilities), webhook_url, token,
           token_expires, name, now, now, ip))
@@ -830,6 +928,12 @@ def relay_heartbeat():
         resp.headers["Access-Control-Allow-Methods"] = "POST"
         resp.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
         return resp, 204
+
+    rl = enforce_rate_limit("relay_heartbeat_write", _write_limit_per_min())
+    if rl:
+        return rl
+
+    now = time.time()
 
     # Extract bearer token
     auth = request.headers.get("Authorization", "")
@@ -885,7 +989,6 @@ def relay_heartbeat():
     if row["relay_token"] != token:
         return cors_json({"error": "Invalid relay token", "code": "AUTH_FAILED"}, 403)
 
-    now = time.time()
     if row["token_expires"] < now:
         return cors_json({"error": "Token expired — re-register", "code": "TOKEN_EXPIRED"}, 401)
 
@@ -984,12 +1087,11 @@ def dns_reverse_lookup(agent_id):
 @app.route("/api/dns", methods=["POST"])
 def dns_register():
     """Register a new DNS name mapping (rate limited)."""
-    ip = get_real_ip()
-    now = time.time()
-    if ip in RATE_LIMIT and (now - RATE_LIMIT[ip]) < RATE_LIMIT_SECONDS:
-        return cors_json({"error": "Rate limited. Wait a moment."}, 429)
-    RATE_LIMIT[ip] = now
+    rl = enforce_rate_limit("api_dns_write", _write_limit_per_min())
+    if rl:
+        return rl
 
+    now = time.time()
     data = request.get_json(silent=True)
     if not data:
         return cors_json({"error": "Invalid JSON"}, 400)
@@ -1164,6 +1266,10 @@ def relay_message():
         resp.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
         return resp, 204
 
+    rl = enforce_rate_limit("relay_message_write", _write_limit_per_min())
+    if rl:
+        return rl
+
     auth = request.headers.get("Authorization", "")
     if not auth.startswith("Bearer "):
         return cors_json({"error": "Missing Authorization: Bearer <relay_token>"}, 401)
@@ -1288,6 +1394,7 @@ def api_all_agents():
             "status": "active",  # Native agents always considered active
         })
 
+
     # Relay agents from DB
     db = get_db()
     rows = db.execute("SELECT * FROM relay_agents ORDER BY last_heartbeat DESC").fetchall()
@@ -1304,7 +1411,7 @@ def api_all_agents():
             "beat_count": row["beat_count"],
             "last_heartbeat": row["last_heartbeat"],
             "relay": True,
-            "preferred_city": json.loads(row["metadata"] or "{}").get("preferred_city", ""),
+            "preferred_city": json.loads(r["metadata"] or "{}").get("preferred_city", ""),
         })
 
     return cors_json(agents)
@@ -1321,6 +1428,115 @@ def cors_json(data, status=200):
     resp = jsonify(data)
     resp.headers["Access-Control-Allow-Origin"] = "*"
     return resp, status
+
+
+# == Identity Management (Key Rotation/Revocation) ==
+
+@app.route("/relay/identity/rotate", methods=["POST", "OPTIONS"])
+def relay_identity_rotate():
+    """Rotate an agent's public key.
+    Requires signing a message with the CURRENT public key.
+    The agent_id remains the same (TOFU identity), but the authorized pubkey changes.
+    """
+    if request.method == "OPTIONS":
+        resp = jsonify({})
+        resp.headers["Access-Control-Allow-Origin"] = "*"
+        resp.headers["Access-Control-Allow-Methods"] = "POST"
+        resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
+        return resp, 204
+
+    rl = enforce_rate_limit("relay_identity_rotate_write", _write_limit_per_min())
+    if rl:
+        return rl
+
+    data = request.get_json(silent=True)
+    if not data:
+        return cors_json({"error": "Invalid JSON"}, 400)
+
+    agent_id = data.get("agent_id", "").strip()
+    new_pubkey_hex = data.get("new_pubkey_hex", "").strip()
+    signature_hex = data.get("signature", "").strip()
+
+    if not agent_id or not new_pubkey_hex or not signature_hex:
+        return cors_json({"error": "agent_id, new_pubkey_hex, and signature are required"}, 400)
+
+    db = get_db()
+    agent = db.execute("SELECT status, pubkey_hex FROM relay_agents WHERE agent_id = ?", (agent_id,)).fetchone()
+
+    if not agent:
+        return cors_json({"error": "Agent not found"}, 404)
+
+    if agent["status"] == "revoked":
+        return cors_json({"error": "Agent identity is revoked and cannot be rotated"}, 403)
+
+    # Verify signature using CURRENT key
+    # Payload: "rotate:<agent_id>:<new_pubkey_hex>"
+    payload = f"rotate:{agent_id}:{new_pubkey_hex}".encode("utf-8")
+    sig_ok = verify_ed25519(agent["pubkey_hex"], signature_hex, payload)
+
+    if sig_ok is False:
+        return cors_json({"error": "Invalid signature using current key"}, 403)
+    if sig_ok is None:
+        return cors_json({"error": "Signature verification unavailable on server"}, 503)
+
+    # Apply rotation
+    now = time.time()
+    db.execute("""
+        UPDATE relay_agents 
+        SET pubkey_hex = ?, last_heartbeat = ?
+        WHERE agent_id = ?
+    """, (new_pubkey_hex, now, agent_id))
+
+    db.execute("""
+        INSERT INTO relay_identity_rotations (agent_id, old_pubkey_hex, new_pubkey_hex, ts, signature_hex)
+        VALUES (?, ?, ?, ?, ?)
+    """, (agent_id, agent["pubkey_hex"], new_pubkey_hex, now, signature_hex))
+
+    db.execute("""
+        INSERT INTO relay_log (ts, action, agent_id, detail)
+        VALUES (?, 'identity_rotate', ?, ?)
+    """, (now, agent_id, json.dumps({"old_key": agent["pubkey_hex"], "new_key": new_pubkey_hex})))
+
+    db.commit()
+    return cors_json({"ok": True, "message": "Public key rotated successfully", "agent_id": agent_id})
+
+
+@app.route("/relay/identity/revoke", methods=["POST", "OPTIONS"])
+def relay_identity_revoke():
+    """Revoke an agent's identity (Admin only)."""
+    if request.method == "OPTIONS":
+        resp = jsonify({})
+        resp.headers["Access-Control-Allow-Origin"] = "*"
+        resp.headers["Access-Control-Allow-Methods"] = "POST"
+        resp.headers["Access-Control-Allow-Headers"] = "Content-Type, X-Admin-Key"
+        return resp, 204
+
+    rl = enforce_rate_limit("relay_identity_revoke_write", _write_limit_per_min())
+    if rl:
+        return rl
+
+    # Simple admin check
+    admin_key = request.headers.get("X-Admin-Key")
+    if not admin_key or admin_key != os.environ.get("RC_ADMIN_KEY"):
+        return cors_json({"error": "Unauthorized admin access"}, 401)
+
+    data = request.get_json(silent=True)
+    if not data:
+        return cors_json({"error": "Invalid JSON"}, 400)
+
+    agent_id = data.get("agent_id", "").strip()
+    if not agent_id:
+        return cors_json({"error": "agent_id required"}, 400)
+
+    db = get_db()
+    db.execute("UPDATE relay_agents SET status = 'revoked' WHERE agent_id = ?", (agent_id,))
+    db.execute("""
+        INSERT INTO relay_log (ts, action, agent_id, detail)
+        VALUES (?, 'identity_revoke', ?, ?)
+    """, (time.time(), agent_id, json.dumps({"reason": data.get("reason", "admin action")})))
+    db.commit()
+
+    return cors_json({"ok": True, "message": f"Agent {agent_id} identity revoked"})
 
 
 
@@ -1453,6 +1669,10 @@ def api_bounties():
         resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
         return resp, 204
 
+    rl = enforce_rate_limit("api_bounties_read", _read_limit_per_min())
+    if rl:
+        return rl
+
     db = get_db()
     rows = db.execute("SELECT * FROM bounty_contracts ORDER BY created_at DESC").fetchall()
     result = []
@@ -1484,6 +1704,10 @@ def api_bounties_sync():
         resp.headers["Access-Control-Allow-Methods"] = "POST"
         resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
         return resp, 204
+
+    rl = enforce_rate_limit("api_bounties_sync_write", _write_limit_per_min())
+    if rl:
+        return rl
 
     import urllib.request
     import re
@@ -1581,6 +1805,10 @@ def api_bounty_claim(bounty_id):
         resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
         return resp, 204
 
+    rl = enforce_rate_limit("api_bounties_claim_write", _write_limit_per_min())
+    if rl:
+        return rl
+
     # Require admin key to claim bounties
     admin_key = request.headers.get("X-Admin-Key", "")
     expected_key = os.environ.get("RC_ADMIN_KEY", "")
@@ -1644,6 +1872,10 @@ def api_bounty_complete(bounty_id):
         resp.headers["Access-Control-Allow-Methods"] = "POST"
         resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
         return resp, 204
+
+    rl = enforce_rate_limit("api_bounties_complete_write", _write_limit_per_min())
+    if rl:
+        return rl
 
     # Require admin key to complete bounties
     admin_key = request.headers.get("X-Admin-Key", "")
@@ -1759,6 +1991,10 @@ def relay_ping():
         resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
         return resp, 204
 
+    rl = enforce_rate_limit("relay_ping_write", _write_limit_per_min())
+    if rl:
+        return rl
+
     data = request.get_json(silent=True)
     if not data:
         return cors_json({"error": "Invalid JSON"}, 400)
@@ -1793,6 +2029,10 @@ def relay_ping():
     row = db.execute("SELECT * FROM relay_agents WHERE agent_id = ?", (agent_id,)).fetchone()
 
     if row:
+        # === REVOCATION CHECK ===
+        if row["status"] == "revoked":
+            return cors_json({"error": "This agent identity has been revoked"}, 403)
+
         # === EXISTING AGENT: Require relay_token for heartbeat update ===
         if not relay_token:
             return cors_json({
