@@ -711,6 +711,10 @@ def relay_register():
         resp.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
         return resp, 204
 
+    rl = enforce_rate_limit("relay_register_write", _write_limit_per_min())
+    if rl:
+        return rl
+
     ip = get_real_ip() or "unknown"
     now = time.time()
     if not ATLAS_RATE_LIMITER.allow(
@@ -857,6 +861,12 @@ def relay_heartbeat():
         resp.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
         return resp, 204
 
+    rl = enforce_rate_limit("relay_heartbeat_write", _write_limit_per_min())
+    if rl:
+        return rl
+
+    now = time.time()
+
     # Extract bearer token
     auth = request.headers.get("Authorization", "")
     if not auth.startswith("Bearer "):
@@ -911,7 +921,6 @@ def relay_heartbeat():
     if row["relay_token"] != token:
         return cors_json({"error": "Invalid relay token", "code": "AUTH_FAILED"}, 403)
 
-    now = time.time()
     if row["token_expires"] < now:
         return cors_json({"error": "Token expired — re-register", "code": "TOKEN_EXPIRED"}, 401)
 
@@ -1189,6 +1198,10 @@ def relay_message():
         resp.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
         return resp, 204
 
+    rl = enforce_rate_limit("relay_message_write", _write_limit_per_min())
+    if rl:
+        return rl
+
     auth = request.headers.get("Authorization", "")
     if not auth.startswith("Bearer "):
         return cors_json({"error": "Missing Authorization: Bearer <relay_token>"}, 401)
@@ -1363,6 +1376,10 @@ def relay_identity_rotate():
         resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
         return resp, 204
 
+    rl = enforce_rate_limit("relay_identity_rotate_write", _write_limit_per_min())
+    if rl:
+        return rl
+
     data = request.get_json(silent=True)
     if not data:
         return cors_json({"error": "Invalid JSON"}, 400)
@@ -1424,6 +1441,10 @@ def relay_identity_revoke():
         resp.headers["Access-Control-Allow-Methods"] = "POST"
         resp.headers["Access-Control-Allow-Headers"] = "Content-Type, X-Admin-Key"
         return resp, 204
+
+    rl = enforce_rate_limit("relay_identity_revoke_write", _write_limit_per_min())
+    if rl:
+        return rl
 
     # Simple admin check
     admin_key = request.headers.get("X-Admin-Key")
