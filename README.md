@@ -698,3 +698,13 @@ See [scorecard/README.md](scorecard/README.md) for full docs.
 - **Issues**: https://github.com/Scottcjn/beacon-skill/issues
 - **Discord**: https://discord.gg/VqVVS2CW9Q
 - **RustChain Discord**: https://discord.gg/tQ4q3z4M
+
+---
+
+<div align="center">
+
+**[Elyan Labs](https://github.com/Scottcjn)** · 1,882 commits · 97 repos · 1,334 stars · $0 raised
+
+[⭐ Star Rustchain](https://github.com/Scottcjn/Rustchain) · [📊 Q1 2026 Traction Report](https://github.com/Scottcjn/Rustchain/blob/main/docs/DEVELOPER_TRACTION_Q1_2026.md) · [Follow @Scottcjn](https://github.com/Scottcjn)
+
+</div>
