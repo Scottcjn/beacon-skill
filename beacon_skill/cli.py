@@ -4557,8 +4557,20 @@ def cmd_dashboard(args: argparse.Namespace) -> int:
 # ── Argument parser ──
 
 def main(argv: Optional[List[str]] = None) -> None:
+    argv_list = list(argv) if argv is not None else sys.argv[1:]
+    json_mode = "--json" in argv_list
+    if json_mode:
+        argv_list = [arg for arg in argv_list if arg != "--json"]
+    if "--version" in argv_list:
+        if json_mode:
+            print(json.dumps({"version": __version__}))
+        else:
+            print(__version__)
+        raise SystemExit(0)
+
     p = argparse.ArgumentParser(prog="beacon", description="Beacon 2.4.0 - autonomous agent economy: presence, trust, feed, rules, tasks, memory, outbox, executor, mayday, heartbeat, accord")
-    p.add_argument("--version", action="version", version=__version__)
+    p.add_argument("--version", action="store_true", help="Show Beacon version and exit")
+    p.add_argument("--json", action="store_true", help="Output command results as JSON")
     sub = p.add_subparsers(dest="cmd", required=True)
 
     # status
@@ -5846,7 +5858,8 @@ def main(argv: Optional[List[str]] = None) -> None:
 
     register_agentmatrix_parser(sub)
 
-    args = p.parse_args(argv)
+    args = p.parse_args(argv_list)
+    args.json = json_mode or bool(getattr(args, "json", False))
     rc = args.func(args)
     raise SystemExit(rc)
 
