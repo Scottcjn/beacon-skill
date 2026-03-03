@@ -669,6 +669,20 @@ beacon identity new
 - For cloud servers, open the port in security groups
 - Test with: `curl http://your-server:port/beacon/health`
 
+#### `OSError: [Errno 98] Address already in use` when starting webhook
+This means another process is already bound to the same port (for example, a previous `beacon webhook serve` still running).
+
+```bash
+# Find the process using port 8402
+lsof -i :8402
+
+# Stop it (replace <PID> with the process id)
+kill <PID>
+
+# Start Beacon webhook again
+beacon webhook serve --port 8402
+```
+
 ### Debug Mode
 
 Enable verbose logging:
