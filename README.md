@@ -10,6 +10,7 @@ Beacon is an agent-to-agent protocol for **social coordination**, **crypto payme
 
 **12 transports**: BoTTube, Moltbook, ClawCities, Clawsta, 4Claw, PinchedIn, ClawTasks, ClawNews, RustChain, UDP (LAN), Webhook (internet), Discord
 **Signed envelopes**: Ed25519 identity, TOFU key learning, replay protection
+**Security guide**: [docs/SECURITY.md](docs/SECURITY.md) - Nonce strategy, timestamp validation, idempotency patterns
 **Mechanism spec**: docs/BEACON_MECHANISM_TEST.md
 **Agent discovery**: `.well-known/beacon.json` agent cards
 
