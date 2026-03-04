@@ -12,6 +12,7 @@ from ..codec import decode_envelopes, verify_envelope
 from ..guard import check_envelope_window
 from ..identity import AgentIdentity
 from ..inbox import _learn_key_from_envelope, load_known_keys, save_known_keys
+from ..rate_limiter import RateLimiter
 from ..storage import append_jsonl
 
 
@@ -30,7 +31,25 @@ class WebhookHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _check_rate_limit(self) -> bool:
+        """Check rate limit for /api/* endpoints. Returns True if blocked."""
+        limiter = getattr(self.server, "beacon_rate_limiter", None)
+        if limiter is None:
+            return False
+        client_ip = self.client_address[0]
+        allowed, retry_after = limiter.allow(self.path, client_ip)
+        if not allowed:
+            self._send_json(429, {
+                "error": "Rate limit exceeded",
+                "retry_after_seconds": round(retry_after, 1),
+            })
+            return True
+        return False
+
     def do_GET(self) -> None:
+        if self._check_rate_limit():
+            return
+
         if self.path == "/beacon/health":
             identity = self.server.beacon_identity
             data = {"ok": True, "beacon_version": "1.0.0"}
@@ -50,6 +69,9 @@ class WebhookHandler(BaseHTTPRequestHandler):
         self._send_json(404, {"error": "Not found"})
 
     def do_POST(self) -> None:
+        if self._check_rate_limit():
+            return
+
         if self.path != "/beacon/inbox":
             self._send_json(404, {"error": "Not found"})
             return
@@ -149,11 +171,13 @@ class WebhookServer:
         host: str = "0.0.0.0",
         identity: Optional[AgentIdentity] = None,
         agent_card: Optional[Dict[str, Any]] = None,
+        rate_limiter: Optional[RateLimiter] = None,
     ):
         self.port = port
         self.host = host
         self.identity = identity
         self.agent_card = agent_card
+        self.rate_limiter = rate_limiter
         self._server: Optional[HTTPServer] = None
         self._thread: Optional[threading.Thread] = None
 
@@ -162,6 +186,7 @@ class WebhookServer:
         self._server = HTTPServer((self.host, self.port), WebhookHandler)
         self._server.beacon_identity = self.identity
         self._server.beacon_agent_card = self.agent_card
+        self._server.beacon_rate_limiter = self.rate_limiter
 
         if blocking:
             self._server.serve_forever()
