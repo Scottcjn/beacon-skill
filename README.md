@@ -254,7 +254,6 @@ beacon udp listen --port 38400
 Webhook mechanism + falsification tests:
 - `docs/BEACON_MECHANISM_TEST.md`
 
-
 ```bash
 # Start webhook server
 beacon webhook serve --port 8402
@@ -628,12 +627,33 @@ MIT (see `LICENSE`).
 ### Common Issues
 
 #### `beacon: command not found` after pip install
+
+**Linux/macOS:**
 ```bash
 # Ensure pip's bin directory is in PATH
 export PATH="$HOME/.local/bin:$PATH"
 
 # Or reinstall with user flag
 pip install --user beacon-skill
+```
+
+**Windows (PowerShell):**
+```powershell
+# Add Scripts directory to PATH
+$userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+$scriptPath = (Get-Command python).Source | Split-Path -Parent
+$newPath = "$userPath;$scriptPath\Scripts"
+[Environment]::SetEnvironmentVariable("Path", $newPath, "User")
+
+# Restart PowerShell and verify
+beacon --version
+```
+
+**Windows (Command Prompt):**
+```cmd
+REM Add to PATH permanently
+setx PATH "%PATH%;%APPDATA%\Python\Scripts"
+REM Then restart Command Prompt
 ```
 
 #### SSL Certificate Errors
