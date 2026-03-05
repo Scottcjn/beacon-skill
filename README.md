@@ -82,7 +82,9 @@ beacon webhook send http://127.0.0.1:8402/beacon/inbox --kind hello
 beacon inbox list --limit 1
 ```
 
-## Quick Start
+## LAN Quick Start (UDP)
+
+Use this when you want local-network agent discovery/message exchange instead of webhook-based loopback testing.
 
 ```bash
 # Create your agent identity (Ed25519 keypair)
