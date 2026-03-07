@@ -2122,8 +2122,7 @@ def relay_ping():
             "ok": True, "agent_id": agent_id, "beat_count": new_beat,
             "status": status_val, "assessment": "healthy",
         })
-    else:
-        # === NEW AGENT: Require signature verification ===
+    # === NEW AGENT: Require signature verification ===
         if not pubkey_hex:
             return cors_json({
                 "error": "pubkey_hex required for new agent registration",
@@ -2142,20 +2141,23 @@ def relay_ping():
                 "error": "pubkey_hex is not valid hex"
             }, 400)
         
+        # Security Fix: Derive agent_id from pubkey to prevent impersonation
+        derived_id = agent_id_from_pubkey_hex(pubkey_hex)
+        if agent_id.startswith("bcn_") and agent_id != derived_id:
+            return cors_json({
+                "error": "agent_id mismatch: for bcn_* identities, agent_id must match the derived ID of the pubkey",
+                "expected": derived_id,
+                "received": agent_id
+            }, 400)
+        
+        # Enforcement: From now on, registrations must use the derived ID
+        agent_id = derived_id
+
         if not signature_hex:
             return cors_json({
                 "error": "signature required for new agent registration",
                 "hint": "Sign the agent_id with your Ed25519 private key"
             }, 400)
-        
-        # Enforce derived identity only for bcn_* IDs.
-        if agent_id.startswith("bcn_"):
-            expected_agent_id = agent_id_from_pubkey_hex(pubkey_hex)
-            if expected_agent_id != agent_id:
-                return cors_json({
-                    "error": "agent_id does not match pubkey",
-                    "expected": expected_agent_id
-                }, 400)
         
         # Verify signature (sign the agent_id)
         sig_result = verify_ed25519(pubkey_hex, signature_hex, agent_id.encode("utf-8"))
