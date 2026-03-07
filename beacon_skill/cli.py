@@ -199,6 +199,49 @@ def _ask_multi(prompt: str, options: List[str], defaults: Optional[List[str]] = 
     return selected if selected else (defaults or [])
 
 
+def cmd_status(args: argparse.Namespace) -> int:
+    """Show beacon status (version, config path, identity status)."""
+    import os
+    from .config import load_config
+    from .identity import AgentIdentity
+    
+    config_path = os.path.join(os.path.expanduser("~"), ".beacon", "config.json")
+    has_config = os.path.exists(config_path)
+    has_identity = False
+    agent_id = None
+    pubkey = None
+    
+    try:
+        ident = AgentIdentity.load(password=getattr(args, "password", None))
+        has_identity = True
+        agent_id = ident.agent_id
+        pubkey = ident.public_key_hex
+    except Exception:
+        pass
+    
+    result = {
+        "version": __version__,
+        "config_path": config_path,
+        "has_config": has_config,
+        "has_identity": has_identity,
+        "agent_id": agent_id,
+        "public_key": pubkey,
+    }
+    
+    if getattr(args, "json", False):
+        print(json.dumps(result, indent=2))
+    else:
+        print(f"Beacon Status")
+        print(f"  Version:      {result['version']}")
+        print(f"  Config:       {result['config_path']}")
+        print(f"  Has Config:   {result['has_config']}")
+        print(f"  Has Identity: {result['has_identity']}")
+        if agent_id:
+            print(f"  Agent ID:     {agent_id}")
+            print(f"  Public Key:   {pubkey}")
+    return 0
+
+
 def cmd_init(args: argparse.Namespace) -> int:
     # Non-interactive mode: just write defaults
     if getattr(args, "quick", False) or not sys.stdin.isatty():
@@ -4514,9 +4557,27 @@ def cmd_dashboard(args: argparse.Namespace) -> int:
 # ── Argument parser ──
 
 def main(argv: Optional[List[str]] = None) -> None:
+    argv_list = list(argv) if argv is not None else sys.argv[1:]
+    json_mode = "--json" in argv_list
+    if json_mode:
+        argv_list = [arg for arg in argv_list if arg != "--json"]
+    if "--version" in argv_list:
+        if json_mode:
+            print(json.dumps({"version": __version__}))
+        else:
+            print(__version__)
+        raise SystemExit(0)
+
     p = argparse.ArgumentParser(prog="beacon", description="Beacon 2.4.0 - autonomous agent economy: presence, trust, feed, rules, tasks, memory, outbox, executor, mayday, heartbeat, accord")
-    p.add_argument("--version", action="version", version=__version__)
+    p.add_argument("--version", action="store_true", help="Show Beacon version and exit")
+    p.add_argument("--json", action="store_true", help="Output command results as JSON")
     sub = p.add_subparsers(dest="cmd", required=True)
+
+    # status
+    sp = sub.add_parser("status", help="Show beacon status (version, config, identity)")
+    sp.add_argument("--json", action="store_true", help="Output as JSON")
+    sp.add_argument("--password", default=None, help="Password for encrypted identity")
+    sp.set_defaults(func=cmd_status)
 
     # init
     sp = sub.add_parser("init", help="Create ~/.beacon/config.json (interactive questionnaire)")
@@ -5797,7 +5858,8 @@ def main(argv: Optional[List[str]] = None) -> None:
 
     register_agentmatrix_parser(sub)
 
-    args = p.parse_args(argv)
+    args = p.parse_args(argv_list)
+    args.json = json_mode or bool(getattr(args, "json", False))
     rc = args.func(args)
     raise SystemExit(rc)
 

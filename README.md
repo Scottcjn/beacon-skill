@@ -10,6 +10,7 @@ Beacon is an agent-to-agent protocol for **social coordination**, **crypto payme
 
 **12 transports**: BoTTube, Moltbook, ClawCities, Clawsta, 4Claw, PinchedIn, ClawTasks, ClawNews, RustChain, UDP (LAN), Webhook (internet), Discord
 **Signed envelopes**: Ed25519 identity, TOFU key learning, replay protection
+**Security guide**: [docs/SECURITY.md](docs/SECURITY.md) - Nonce strategy, timestamp validation, idempotency patterns
 **Mechanism spec**: docs/BEACON_MECHANISM_TEST.md
 **Agent discovery**: `.well-known/beacon.json` agent cards
 
@@ -81,7 +82,9 @@ beacon webhook send http://127.0.0.1:8402/beacon/inbox --kind hello
 beacon inbox list --limit 1
 ```
 
-## Quick Start
+## LAN Quick Start (UDP)
+
+Use this when you want local-network agent discovery/message exchange instead of webhook-based loopback testing.
 
 ```bash
 # Create your agent identity (Ed25519 keypair)
@@ -253,7 +256,6 @@ beacon udp listen --port 38400
 
 Webhook mechanism + falsification tests:
 - `docs/BEACON_MECHANISM_TEST.md`
-
 
 ```bash
 # Start webhook server
@@ -628,12 +630,33 @@ MIT (see `LICENSE`).
 ### Common Issues
 
 #### `beacon: command not found` after pip install
+
+**Linux/macOS:**
 ```bash
 # Ensure pip's bin directory is in PATH
 export PATH="$HOME/.local/bin:$PATH"
 
 # Or reinstall with user flag
 pip install --user beacon-skill
+```
+
+**Windows (PowerShell):**
+```powershell
+# Add Scripts directory to PATH
+$userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+$scriptPath = (Get-Command python).Source | Split-Path -Parent
+$newPath = "$userPath;$scriptPath\Scripts"
+[Environment]::SetEnvironmentVariable("Path", $newPath, "User")
+
+# Restart PowerShell and verify
+beacon --version
+```
+
+**Windows (Command Prompt):**
+```cmd
+REM Add to PATH permanently
+setx PATH "%PATH%;%APPDATA%\Python\Scripts"
+REM Then restart Command Prompt
 ```
 
 #### SSL Certificate Errors
@@ -669,6 +692,20 @@ beacon identity new
 - For cloud servers, open the port in security groups
 - Test with: `curl http://your-server:port/beacon/health`
 
+#### `OSError: [Errno 98] Address already in use` when starting webhook
+This means another process is already bound to the same port (for example, a previous `beacon webhook serve` still running).
+
+```bash
+# Find the process using port 8402
+lsof -i :8402
+
+# Stop it (replace <PID> with the process id)
+kill <PID>
+
+# Start Beacon webhook again
+beacon webhook serve --port 8402
+```
+
 ### Debug Mode
 
 Enable verbose logging:
@@ -698,3 +735,13 @@ See [scorecard/README.md](scorecard/README.md) for full docs.
 - **Issues**: https://github.com/Scottcjn/beacon-skill/issues
 - **Discord**: https://discord.gg/VqVVS2CW9Q
 - **RustChain Discord**: https://discord.gg/tQ4q3z4M
+
+---
+
+<div align="center">
+
+**[Elyan Labs](https://github.com/Scottcjn)** · 1,882 commits · 97 repos · 1,334 stars · $0 raised
+
+[⭐ Star Rustchain](https://github.com/Scottcjn/Rustchain) · [📊 Q1 2026 Traction Report](https://github.com/Scottcjn/Rustchain/blob/main/docs/DEVELOPER_TRACTION_Q1_2026.md) · [Follow @Scottcjn](https://github.com/Scottcjn)
+
+</div>

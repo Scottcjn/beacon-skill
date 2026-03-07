@@ -317,7 +317,7 @@ RATE_LIMIT_MAX_ENTRIES = int(os.getenv("ATLAS_RATE_LIMIT_MAX_ENTRIES", "10000"))
 RATE_LIMIT_CLEANUP_INTERVAL_SECONDS = int(os.getenv("ATLAS_RATE_LIMIT_CLEANUP_INTERVAL", "30"))
 
 
-class BoundedRateLimiter:
+class RateLimiter:
     """Per-key fixed-window rate limiter with bounded, TTL-cleaned storage."""
 
     def __init__(self, *, max_entries=10000, ttl_seconds=900, cleanup_interval_seconds=30):
@@ -366,7 +366,7 @@ class BoundedRateLimiter:
         return True
 
 
-ATLAS_RATE_LIMITER = BoundedRateLimiter(
+ATLAS_RATE_LIMITER = RateLimiter(
     max_entries=RATE_LIMIT_MAX_ENTRIES,
     ttl_seconds=RATE_LIMIT_TTL_SECONDS,
     cleanup_interval_seconds=RATE_LIMIT_CLEANUP_INTERVAL_SECONDS,
@@ -387,6 +387,19 @@ def enforce_rate_limit(bucket, limit, error_message="Rate limited. Try again sho
     if not ATLAS_RATE_LIMITER.allow(key, limit, window_seconds=RATE_LIMIT_WINDOW_SECONDS):
         return cors_json({"error": error_message}, 429)
     return None
+
+
+@app.before_request
+def enforce_api_rate_limits():
+    if not request.path.startswith("/api/"):
+        return None
+    if request.method == "OPTIONS":
+        return None
+
+    method = request.method.upper()
+    if method in {"POST", "PATCH", "DELETE"}:
+        return enforce_rate_limit("api_write", _write_limit_per_min())
+    return enforce_rate_limit("api_read", _read_limit_per_min())
 
 # --- LLM Configuration ---
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434/api/chat")
@@ -561,10 +574,6 @@ def chat():
         resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
         return resp, 204
 
-    rl = enforce_rate_limit("api_chat_write", _write_limit_per_min())
-    if rl:
-        return rl
-
     data = request.get_json(silent=True)
     if not data:
         return cors_json({"error": "Invalid JSON"}, 400)
@@ -631,10 +640,6 @@ def list_contracts():
         resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
         return resp, 204
 
-    rl = enforce_rate_limit("api_contracts_read", _read_limit_per_min())
-    if rl:
-        return rl
-
     db = get_db()
     rows = db.execute("SELECT * FROM contracts ORDER BY created_at DESC").fetchall()
     contracts = []
@@ -651,10 +656,6 @@ def list_contracts():
 
 @app.route("/api/contracts", methods=["POST"])
 def create_contract():
-    rl = enforce_rate_limit("api_contracts_write", _write_limit_per_min())
-    if rl:
-        return rl
-
     now = time.time()
     data = request.get_json(silent=True)
     if not data:
@@ -728,10 +729,6 @@ def update_contract(contract_id):
         resp.headers["Access-Control-Allow-Methods"] = "PATCH"
         resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
         return resp, 204
-
-    rl = enforce_rate_limit("api_contracts_write_patch", _write_limit_per_min())
-    if rl:
-        return rl
 
     data = request.get_json(silent=True)
     if not data:
@@ -1087,10 +1084,6 @@ def dns_reverse_lookup(agent_id):
 @app.route("/api/dns", methods=["POST"])
 def dns_register():
     """Register a new DNS name mapping (rate limited)."""
-    rl = enforce_rate_limit("api_dns_write", _write_limit_per_min())
-    if rl:
-        return rl
-
     now = time.time()
     data = request.get_json(silent=True)
     if not data:
@@ -1669,10 +1662,6 @@ def api_bounties():
         resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
         return resp, 204
 
-    rl = enforce_rate_limit("api_bounties_read", _read_limit_per_min())
-    if rl:
-        return rl
-
     db = get_db()
     rows = db.execute("SELECT * FROM bounty_contracts ORDER BY created_at DESC").fetchall()
     result = []
@@ -1704,10 +1693,6 @@ def api_bounties_sync():
         resp.headers["Access-Control-Allow-Methods"] = "POST"
         resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
         return resp, 204
-
-    rl = enforce_rate_limit("api_bounties_sync_write", _write_limit_per_min())
-    if rl:
-        return rl
 
     import urllib.request
     import re
@@ -1805,10 +1790,6 @@ def api_bounty_claim(bounty_id):
         resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
         return resp, 204
 
-    rl = enforce_rate_limit("api_bounties_claim_write", _write_limit_per_min())
-    if rl:
-        return rl
-
     # Require admin key to claim bounties
     admin_key = request.headers.get("X-Admin-Key", "")
     expected_key = os.environ.get("RC_ADMIN_KEY", "")
@@ -1872,10 +1853,6 @@ def api_bounty_complete(bounty_id):
         resp.headers["Access-Control-Allow-Methods"] = "POST"
         resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
         return resp, 204
-
-    rl = enforce_rate_limit("api_bounties_complete_write", _write_limit_per_min())
-    if rl:
-        return rl
 
     # Require admin key to complete bounties
     admin_key = request.headers.get("X-Admin-Key", "")
