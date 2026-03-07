@@ -47,6 +47,8 @@ RELAY_SILENCE_THRESHOLD_S = 900     # 15 min = silent
 RELAY_DEAD_THRESHOLD_S = 3600       # 1 hour = presumed dead
 RELAY_REGISTER_COOLDOWN_S = 10      # Rate limit registration
 RELAY_HEARTBEAT_COOLDOWN_S = 60     # Min seconds between heartbeats per agent
+RELAY_PING_NONCE_WINDOW_S = 300     # Max clock skew + replay window
+RELAY_PING_NONCE_MAX_LEN = 128      # Bound nonce payload size
 
 KNOWN_PROVIDERS = {
     "xai": "xAI (Grok)",
@@ -127,6 +129,62 @@ def assess_relay_status(last_heartbeat_ts):
     if age <= RELAY_DEAD_THRESHOLD_S:
         return "silent"
     return "presumed_dead"
+
+
+def parse_relay_ping_nonce(data, now):
+    """Validate and normalize nonce/timestamp fields for /relay/ping."""
+    nonce_raw = data.get("nonce", "")
+    if isinstance(nonce_raw, (int, float)):
+        nonce_raw = str(nonce_raw)
+    if not isinstance(nonce_raw, str):
+        return None, None, cors_json({"error": "nonce must be a string"}, 400)
+
+    nonce = nonce_raw.strip()
+    if not nonce:
+        return None, None, cors_json({
+            "error": "nonce required",
+            "hint": "Include a unique nonce per /relay/ping request",
+        }, 400)
+    if len(nonce) > RELAY_PING_NONCE_MAX_LEN:
+        return None, None, cors_json({
+            "error": f"nonce too long (max {RELAY_PING_NONCE_MAX_LEN} chars)",
+        }, 400)
+
+    ts_raw = data.get("ts")
+    if ts_raw is None:
+        return None, None, cors_json({
+            "error": "ts required",
+            "hint": "Include unix timestamp seconds in ts",
+        }, 400)
+
+    try:
+        ts_value = float(ts_raw)
+    except (TypeError, ValueError):
+        return None, None, cors_json({"error": "ts must be a unix timestamp number"}, 400)
+
+    if abs(now - ts_value) > RELAY_PING_NONCE_WINDOW_S:
+        return None, None, cors_json({
+            "error": "timestamp outside accepted window",
+            "window_s": RELAY_PING_NONCE_WINDOW_S,
+        }, 400)
+
+    return nonce, ts_value, None
+
+
+def reserve_relay_ping_nonce(db, agent_id, nonce, ts_value, now):
+    """Reserve nonce for replay window. Returns False if nonce already seen."""
+    db.execute(
+        "DELETE FROM relay_ping_nonces WHERE created_at < ?",
+        (now - RELAY_PING_NONCE_WINDOW_S,),
+    )
+    try:
+        db.execute(
+            "INSERT INTO relay_ping_nonces (agent_id, nonce, ts, created_at) VALUES (?, ?, ?, ?)",
+            (agent_id, nonce, ts_value, now),
+        )
+    except sqlite3.IntegrityError:
+        return False
+    return True
 
 
 SEED_CONTRACTS = [
@@ -222,6 +280,16 @@ def init_db():
             agent_id TEXT NOT NULL,
             owner TEXT DEFAULT '',
             created_at REAL NOT NULL
+        )
+    """)
+    # BEP-2: Replay-protection nonce log for /relay/ping
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS relay_ping_nonces (
+            agent_id TEXT NOT NULL,
+            nonce TEXT NOT NULL,
+            ts REAL NOT NULL,
+            created_at REAL NOT NULL,
+            PRIMARY KEY (agent_id, nonce)
         )
     """)
     conn.commit()
@@ -1319,6 +1387,7 @@ def api_all_agents():
             "status": "active",  # Native agents always considered active
         })
 
+
     # Relay agents from DB
     db = get_db()
     rows = db.execute("SELECT * FROM relay_agents ORDER BY last_heartbeat DESC").fetchall()
@@ -1929,6 +1998,9 @@ def relay_ping():
 
     ip = get_real_ip()
     now = time.time()
+    nonce, ts_value, nonce_error = parse_relay_ping_nonce(data, now)
+    if nonce_error is not None:
+        return nonce_error
 
     db = get_db()
     row = db.execute("SELECT * FROM relay_agents WHERE agent_id = ?", (agent_id,)).fetchone()
@@ -1957,6 +2029,57 @@ def relay_ping():
                 "error": "relay_token expired",
                 "hint": "Re-register to get a new token"
             }, 403)
+
+        stored_pubkey_hex = (row["pubkey_hex"] or "").strip()
+        if not stored_pubkey_hex:
+            return cors_json({
+                "error": "Stored identity key missing",
+                "hint": "Re-register this agent to restore identity binding",
+            }, 403)
+
+        if len(stored_pubkey_hex) != 64:
+            return cors_json({
+                "error": "Stored identity key invalid",
+                "hint": "Re-register this agent to restore identity binding",
+            }, 403)
+        try:
+            bytes.fromhex(stored_pubkey_hex)
+        except ValueError:
+            return cors_json({
+                "error": "Stored identity key invalid",
+                "hint": "Re-register this agent to restore identity binding",
+            }, 403)
+
+        if pubkey_hex:
+            if len(pubkey_hex) != 64:
+                return cors_json({
+                    "error": "pubkey_hex must be 64 hex chars (32 bytes Ed25519)"
+                }, 400)
+            try:
+                bytes.fromhex(pubkey_hex)
+            except ValueError:
+                return cors_json({
+                    "error": "pubkey_hex is not valid hex"
+                }, 400)
+            if pubkey_hex != stored_pubkey_hex:
+                return cors_json({
+                    "error": "pubkey_hex does not match registered key for this agent"
+                }, 403)
+
+        if agent_id.startswith("bcn_"):
+            expected_agent_id = agent_id_from_pubkey_hex(stored_pubkey_hex)
+            if expected_agent_id != agent_id:
+                return cors_json({
+                    "error": "agent_id does not match registered pubkey identity",
+                    "expected": expected_agent_id,
+                }, 403)
+
+        if not reserve_relay_ping_nonce(db, agent_id, nonce, ts_value, now):
+            return cors_json({
+                "error": "nonce replay detected",
+                "hint": "Use a fresh nonce for each /relay/ping request",
+                "window_s": RELAY_PING_NONCE_WINDOW_S,
+            }, 409)
         
         # Token valid - proceed with heartbeat update
         new_beat = row["beat_count"] + 1
@@ -2002,14 +2125,18 @@ def relay_ping():
                 "hint": "Sign the agent_id with your Ed25519 private key"
             }, 400)
         
-        # Verify agent_id matches pubkey
-        expected_agent_id = agent_id_from_pubkey_hex(pubkey_hex)
-        if expected_agent_id != agent_id:
+        # Security Fix: Derive agent_id from pubkey to prevent impersonation
+        derived_id = agent_id_from_pubkey_hex(pubkey_hex)
+        if agent_id.startswith("bcn_") and agent_id != derived_id:
             return cors_json({
-                "error": "agent_id does not match pubkey",
-                "expected": expected_agent_id
+                "error": "agent_id mismatch: for bcn_* identities, agent_id must match the derived ID of the pubkey",
+                "expected": derived_id,
+                "received": agent_id
             }, 400)
         
+        # Enforcement: From now on, registrations must use the derived ID
+        agent_id = derived_id
+
         # Verify signature (sign the agent_id)
         sig_result = verify_ed25519(pubkey_hex, signature_hex, agent_id.encode("utf-8"))
         
@@ -2025,6 +2152,13 @@ def relay_ping():
                 "error": "Invalid signature",
                 "hint": "Sign your agent_id with your Ed25519 private key"
             }, 403)
+
+        if not reserve_relay_ping_nonce(db, agent_id, nonce, ts_value, now):
+            return cors_json({
+                "error": "nonce replay detected",
+                "hint": "Use a fresh nonce for each /relay/ping request",
+                "window_s": RELAY_PING_NONCE_WINDOW_S,
+            }, 409)
         
         # Signature valid - proceed with registration
         auto_token = "relay_" + secrets.token_hex(24)
