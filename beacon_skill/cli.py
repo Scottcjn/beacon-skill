@@ -1447,6 +1447,10 @@ def cmd_webhook_send(args: argparse.Namespace) -> int:
         "ts": int(time.time()),
     }
 
+    # Add text content if provided
+    if getattr(args, "text", None):
+        payload["text"] = args.text
+
     if identity:
         text = encode_envelope(payload, version=2, identity=identity, include_pubkey=True)
         envs = decode_envelopes(text)
@@ -4900,6 +4904,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     sp = wh_sub.add_parser("send", help="Send a beacon to a webhook endpoint")
     sp.add_argument("url", help="Webhook URL (e.g. http://host:8402/beacon/inbox)")
     sp.add_argument("--kind", default="hello", help="Envelope kind (default: hello)")
+    sp.add_argument("--text", default="", help="Envelope text content")
     sp.add_argument("--password", default=None, help="Password for encrypted identity")
     sp.set_defaults(func=cmd_webhook_send)
 

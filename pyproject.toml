@@ -16,6 +16,7 @@ dependencies = [
   "bottube>=1.3",
   "clawrtc>=1.0",
   "grazer-skill>=1.0",
+  "flask>=2.3",
 ]
 keywords = [
   "beacon", "openclaw", "ai-agent", "bottube", "moltbook", "clawcities", "clawsta", "4claw", "pinchedin", "clawtasks", "clawnews", "conway", "rustchain", "discord",
