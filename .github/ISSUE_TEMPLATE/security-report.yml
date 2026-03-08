@@ -1,0 +1,82 @@
+name: Security Report
+description: Report a security or identity-integrity issue in beacon-skill
+title: "[Security] "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Report a Security Issue
+        Use this form for relay abuse, replay attacks, impersonation, key handling bugs, or other security-sensitive behavior.
+
+        Do **not** use this form for bounty claims, wallet registration, or generic support.
+        Do **not** paste private keys, tokens, or live credentials into this issue.
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Affected area
+      options:
+        - Relay / webhook
+        - Identity / signing
+        - Atlas / discovery
+        - Inbox / persistence
+        - CLI / packaging
+        - Documentation / unsafe guidance
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Severity
+      options:
+        - Low
+        - Medium
+        - High
+        - Critical
+    validations:
+      required: true
+
+  - type: textarea
+    id: impact
+    attributes:
+      label: Impact
+      description: What can an attacker or abusive client accomplish?
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction steps
+      description: Provide the smallest reproducible example you can.
+      placeholder: |
+        1. Generate identity A and identity B
+        2. Send ...
+        3. Observe ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: affected_versions
+    attributes:
+      label: Affected versions / environments
+      description: Include package version, commit, OS, Python version, or deployment if known.
+
+  - type: textarea
+    id: mitigation
+    attributes:
+      label: Suggested mitigation
+      description: Optional, but useful if you already know the likely fix.
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Checklist
+      options:
+        - label: I did not include secrets, private keys, or unpublished credentials.
+          required: true
+        - label: This is not a bounty claim or wallet registration request.
+          required: true
