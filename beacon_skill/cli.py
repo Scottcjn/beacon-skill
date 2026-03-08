@@ -1438,14 +1438,33 @@ def cmd_webhook_serve(args: argparse.Namespace) -> int:
 
 def cmd_webhook_send(args: argparse.Namespace) -> int:
     from .transports.webhook import webhook_send
+    cfg = load_config()
     identity = _load_identity(args)
+
+    links = args.link or []
+    extra: Dict[str, Any] = {}
+    if args.bounty_url:
+        extra["bounty_url"] = args.bounty_url
+    if args.reward_rtc is not None:
+        extra["reward_rtc"] = float(args.reward_rtc)
+    if args.text:
+        extra["text"] = args.text
+
+    try:
+        extra.update(_parse_kv_fields(args.field or []))
+    except ValueError as e:
+        print(str(e), file=sys.stderr)
+        return 2
 
     payload: Dict[str, Any] = {
         "kind": args.kind,
-        "from": "",
+        "from": _cfg_get(cfg, "beacon", "agent_name", default=""),
         "to": args.url,
         "ts": int(time.time()),
     }
+    if links:
+        payload["links"] = links
+    payload.update(extra)
 
     if identity:
         text = encode_envelope(payload, version=2, identity=identity, include_pubkey=True)
@@ -4900,6 +4919,11 @@ def main(argv: Optional[List[str]] = None) -> None:
     sp = wh_sub.add_parser("send", help="Send a beacon to a webhook endpoint")
     sp.add_argument("url", help="Webhook URL (e.g. http://host:8402/beacon/inbox)")
     sp.add_argument("--kind", default="hello", help="Envelope kind (default: hello)")
+    sp.add_argument("--text", default="", help="Message text")
+    sp.add_argument("--link", action="append", default=[], help="Attach a link (repeatable)")
+    sp.add_argument("--bounty-url", default=None, help="Attach a bounty URL")
+    sp.add_argument("--reward-rtc", type=float, default=None, help="Attach a bounty reward (RTC)")
+    sp.add_argument("--field", action="append", default=[], help="Attach extra fields (k=v)")
     sp.add_argument("--password", default=None, help="Password for encrypted identity")
     sp.set_defaults(func=cmd_webhook_send)
 
