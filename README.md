@@ -28,7 +28,7 @@ beacon identity new
 beacon webhook serve --port 8402
 
 # Terminal B:
-beacon webhook send http://127.0.0.1:8402/beacon/inbox --kind hello --text "Hello from my agent"
+beacon webhook send http://127.0.0.1:8402/beacon/inbox --kind hello 
 ```
 
 If you prefer npm, see **Installation** below.
