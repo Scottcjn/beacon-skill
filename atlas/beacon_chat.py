@@ -12,6 +12,7 @@ import os
 import secrets
 import time
 import json
+import re
 import uuid
 import sqlite3
 from collections import OrderedDict
@@ -101,6 +102,85 @@ def dns_reverse(agent_id):
     db = get_db()
     rows = db.execute("SELECT name, owner, created_at FROM beacon_dns WHERE agent_id = ?", (agent_id,)).fetchall()
     return [{"name": r["name"], "owner": r["owner"], "created_at": r["created_at"]} for r in rows]
+
+
+COLLAB_LIST_KEYS = ("offers", "needs", "topics", "curiosities")
+
+
+def _normalize_collab_list(values, *, max_items=12, max_len=48):
+    """Normalize list-like collaboration metadata into stable lowercase tokens."""
+    if not isinstance(values, list):
+        return []
+    result = []
+    seen = set()
+    for raw in values:
+        text = re.sub(r"\s+", " ", str(raw or "").strip().lower())
+        if not text:
+            continue
+        text = text[:max_len]
+        if text in seen:
+            continue
+        seen.add(text)
+        result.append(text)
+        if len(result) >= max_items:
+            break
+    return result
+
+
+def _merge_collab_metadata(meta, data):
+    """Merge structured collaboration hints from register/heartbeat payloads."""
+    meta = dict(meta or {})
+    for key in COLLAB_LIST_KEYS:
+        if key in data:
+            meta[key] = _normalize_collab_list(data.get(key))
+
+    if "preferred_city" in data:
+        preferred_city = str(data.get("preferred_city") or "").strip()[:80]
+        if preferred_city:
+            meta["preferred_city"] = preferred_city
+        else:
+            meta.pop("preferred_city", None)
+
+    if "values_hash" in data:
+        values_hash = str(data.get("values_hash") or "").strip()[:128]
+        if values_hash:
+            meta["values_hash"] = values_hash
+        else:
+            meta.pop("values_hash", None)
+
+    return meta
+
+
+def _parse_meta_json(raw):
+    try:
+        value = json.loads(raw or "{}")
+    except Exception:
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def _relay_profile_from_row(row):
+    """Build a normalized relay profile for matching and discover endpoints."""
+    meta = _parse_meta_json(row["metadata"] if "metadata" in row.keys() else "{}")
+    return {
+        "agent_id": row["agent_id"],
+        "name": row["name"],
+        "provider": row["provider"],
+        "provider_name": KNOWN_PROVIDERS.get(row["provider"], row["provider"]),
+        "model_id": row["model_id"],
+        "status": assess_relay_status(int(row["last_heartbeat"])),
+        "capabilities": _normalize_collab_list(json.loads(row["capabilities"] or "[]"), max_len=32),
+        "offers": _normalize_collab_list(meta.get("offers", [])),
+        "needs": _normalize_collab_list(meta.get("needs", [])),
+        "topics": _normalize_collab_list(meta.get("topics", [])),
+        "curiosities": _normalize_collab_list(meta.get("curiosities", [])),
+        "preferred_city": str(meta.get("preferred_city", "") or "").strip(),
+        "values_hash": str(meta.get("values_hash", "") or "").strip(),
+        "last_heartbeat": float(row["last_heartbeat"] or 0),
+        "beat_count": int(row["beat_count"] or 0),
+        "profile_url": f"https://rustchain.org/beacon/agent/{row['agent_id']}",
+        "seo_url": (row["seo_url"] if "seo_url" in row.keys() else "") or "",
+    }
 
 
 def agent_id_from_pubkey_hex(pubkey_hex):
@@ -809,6 +889,7 @@ def relay_register():
     webhook_url = data.get("webhook_url", "").strip()
     name = data.get("name", "").strip()
     signature = data.get("signature", "").strip()
+    profile_meta = _merge_collab_metadata({}, data)
 
     # Validate pubkey
     if not pubkey_hex or len(pubkey_hex) != 64:
@@ -879,15 +960,16 @@ def relay_register():
         INSERT INTO relay_agents
             (agent_id, pubkey_hex, model_id, provider, capabilities, webhook_url,
              relay_token, token_expires, name, status, beat_count, registered_at, last_heartbeat, metadata, origin_ip)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', 0, ?, ?, '{}', ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', 0, ?, ?, ?, ?)
         ON CONFLICT(agent_id) DO UPDATE SET
             model_id=excluded.model_id, provider=excluded.provider,
             capabilities=excluded.capabilities, webhook_url=excluded.webhook_url,
             relay_token=excluded.relay_token, token_expires=excluded.token_expires,
-            name=excluded.name, last_heartbeat=excluded.last_heartbeat
+            name=excluded.name, last_heartbeat=excluded.last_heartbeat,
+            metadata=excluded.metadata
     """, (agent_id, pubkey_hex, model_id, provider,
           json.dumps(capabilities), webhook_url, token,
-          token_expires, name, now, now, ip))
+          token_expires, name, now, now, json.dumps(profile_meta), ip))
     db.commit()
 
     # Log
@@ -954,6 +1036,7 @@ def relay_heartbeat():
     agent_id = data.get("agent_id", "").strip()
     status_val = data.get("status", "alive").strip()
     health_data = data.get("health", None)
+    profile_meta = _merge_collab_metadata({}, data)
 
     if not agent_id:
         return cors_json({"error": "agent_id required"}, 400)
@@ -976,10 +1059,10 @@ def relay_heartbeat():
             "INSERT INTO relay_agents"
             " (agent_id, pubkey_hex, model_id, provider, capabilities, webhook_url,"
             "  relay_token, token_expires, name, status, beat_count, registered_at, last_heartbeat, metadata, origin_ip)"
-            " VALUES (?,?,?,?,?,'',?,?,?,'active',1,?,?,'{}',?)",
+            " VALUES (?,?,?,?,?,'',?,?,?,'active',1,?,?,?,?)",
             (agent_id, hb_pubkey, hb_name, hb_provider,
              json.dumps(hb_caps if isinstance(hb_caps, list) else []),
-             auto_token, now + RELAY_TOKEN_TTL_S, hb_name, now, now, hb_ip))
+             auto_token, now + RELAY_TOKEN_TTL_S, hb_name, now, now, json.dumps(profile_meta), hb_ip))
         db.commit()
         db.execute("INSERT INTO relay_log (ts, action, agent_id, detail) VALUES (?, 'auto_register', ?, ?)",
                    (now, agent_id, json.dumps({"name": hb_name, "provider": hb_provider, "ip": hb_ip})))
@@ -1006,6 +1089,7 @@ def relay_heartbeat():
     if health_data:
         meta["last_health"] = health_data
     meta["last_ip"] = get_real_ip()
+    meta = _merge_collab_metadata(meta, data)
 
     db.execute("""
         UPDATE relay_agents SET
@@ -1196,6 +1280,7 @@ def relay_discover():
             continue
 
         caps = json.loads(row["capabilities"] or "[]")
+        profile = _relay_profile_from_row(row)
         if capability_filter and capability_filter not in caps:
             continue
 
@@ -1205,13 +1290,17 @@ def relay_discover():
             "provider": row["provider"],
             "provider_name": KNOWN_PROVIDERS.get(row["provider"], row["provider"]),
             "capabilities": caps,
+            "offers": profile["offers"],
+            "needs": profile["needs"],
+            "topics": profile["topics"],
+            "curiosities": profile["curiosities"],
             "name": row["name"],
             "status": assessment,
             "beat_count": row["beat_count"],
             "registered_at": row["registered_at"],
             "last_heartbeat": row["last_heartbeat"],
             "relay": True,
-            "preferred_city": json.loads(row["metadata"] or "{}").get("preferred_city", ""),
+            "preferred_city": profile["preferred_city"],
             "profile_url": f"https://rustchain.org/beacon/agent/{row['agent_id']}",
             "seo_url": (row["seo_url"] if "seo_url" in row.keys() else "") or "",
         })
@@ -1235,6 +1324,7 @@ def relay_status(agent_id):
         return cors_json({"error": "Agent not found"}, 404)
 
     caps = json.loads(row["capabilities"] or "[]")
+    profile = _relay_profile_from_row(row)
     meta = json.loads(row["metadata"] or "{}")
 
     return cors_json({
@@ -1243,12 +1333,17 @@ def relay_status(agent_id):
         "provider": row["provider"],
         "provider_name": KNOWN_PROVIDERS.get(row["provider"], row["provider"]),
         "capabilities": caps,
+        "offers": profile["offers"],
+        "needs": profile["needs"],
+        "topics": profile["topics"],
+        "curiosities": profile["curiosities"],
         "name": row["name"],
         "status": assess_relay_status(int(row["last_heartbeat"])),
         "beat_count": row["beat_count"],
         "registered_at": row["registered_at"],
         "last_heartbeat": row["last_heartbeat"],
         "health": meta.get("last_health"),
+        "preferred_city": profile["preferred_city"],
         "relay": True,
     })
 
@@ -1786,6 +1881,140 @@ def api_agent_reputation(agent_id):
     return cors_json(result)
 
 
+def _reputation_snapshot(db, agent_id):
+    """Best-effort reputation lookup for collaborator ranking."""
+    try:
+        row = db.execute(
+            "SELECT score, contracts_completed, bounties_completed FROM reputation WHERE agent_id = ?",
+            (agent_id,),
+        ).fetchone()
+    except sqlite3.OperationalError:
+        return {"score": 0.0, "contracts_completed": 0, "bounties_completed": 0}
+    if not row:
+        return {"score": 0.0, "contracts_completed": 0, "bounties_completed": 0}
+    return {
+        "score": float(row["score"] or 0),
+        "contracts_completed": int(row["contracts_completed"] or 0),
+        "bounties_completed": int(row["bounties_completed"] or 0),
+    }
+
+
+def _score_collaborator(source, candidate, rep_score):
+    """Score a candidate using offer/need overlap, freshness, and light trust signals."""
+    offer_match = sorted(set(candidate["offers"]) & set(source["needs"]))
+    need_match = sorted(set(candidate["needs"]) & set(source["offers"]))
+    shared_caps = sorted(set(candidate["capabilities"]) & set(source["capabilities"]))
+    shared_topics = sorted(
+        (set(candidate["topics"]) | set(candidate["curiosities"]))
+        & (set(source["topics"]) | set(source["curiosities"]))
+    )
+
+    score = 0.0
+    reasons = []
+
+    if offer_match:
+        score += min(0.40, 0.20 * len(offer_match))
+        reasons.append("offers what you need: " + ", ".join(offer_match))
+    if need_match:
+        score += min(0.25, 0.12 * len(need_match))
+        reasons.append("needs what you offer: " + ", ".join(need_match))
+    if shared_caps:
+        score += min(0.15, 0.05 * len(shared_caps))
+        reasons.append("shared capabilities: " + ", ".join(shared_caps))
+    if shared_topics:
+        score += min(0.10, 0.03 * len(shared_topics))
+        reasons.append("shared interests: " + ", ".join(shared_topics[:4]))
+    if source["preferred_city"] and candidate["preferred_city"] and source["preferred_city"].lower() == candidate["preferred_city"].lower():
+        score += 0.05
+        reasons.append(f"same city: {candidate['preferred_city']}")
+    if candidate["status"] == "healthy":
+        score += 0.05
+        reasons.append("fresh heartbeat")
+    elif candidate["status"] == "silent":
+        score += 0.02
+    if rep_score > 0:
+        score += min(0.10, rep_score / 200.0)
+        reasons.append(f"reputation {rep_score:.1f}")
+
+    return round(min(score, 0.99) * 100, 1), reasons
+
+
+@app.route("/api/matches/<agent_id>", methods=["GET", "OPTIONS"])
+def api_matches(agent_id):
+    """Recommend likely collaborators for a relay agent."""
+    if request.method == "OPTIONS":
+        resp = jsonify({})
+        resp.headers["Access-Control-Allow-Origin"] = "*"
+        resp.headers["Access-Control-Allow-Methods"] = "GET"
+        resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
+        return resp, 204
+
+    resolved_agent_id, resolved = dns_resolve(agent_id)
+    include_dead = request.args.get("include_dead", "false").lower() == "true"
+    limit = min(50, max(1, request.args.get("limit", 10, type=int)))
+
+    db = get_db()
+    source_row = db.execute("SELECT * FROM relay_agents WHERE agent_id = ?", (resolved_agent_id,)).fetchone()
+    if not source_row:
+        return cors_json({"error": "Agent not found"}, 404)
+
+    source = _relay_profile_from_row(source_row)
+    rows = db.execute("SELECT * FROM relay_agents ORDER BY last_heartbeat DESC").fetchall()
+    matches = []
+    for row in rows:
+        candidate = _relay_profile_from_row(row)
+        if candidate["agent_id"] == source["agent_id"]:
+            continue
+        if not include_dead and candidate["status"] == "presumed_dead":
+            continue
+
+        rep = _reputation_snapshot(db, candidate["agent_id"])
+        score, reasons = _score_collaborator(source, candidate, rep["score"])
+        if score <= 0:
+            continue
+
+        matches.append({
+            "agent_id": candidate["agent_id"],
+            "name": candidate["name"],
+            "provider": candidate["provider"],
+            "provider_name": candidate["provider_name"],
+            "model_id": candidate["model_id"],
+            "status": candidate["status"],
+            "score": score,
+            "reasons": reasons,
+            "capabilities": candidate["capabilities"],
+            "offers": candidate["offers"],
+            "needs": candidate["needs"],
+            "topics": candidate["topics"],
+            "curiosities": candidate["curiosities"],
+            "preferred_city": candidate["preferred_city"],
+            "reputation_score": round(rep["score"], 1),
+            "contracts_completed": rep["contracts_completed"],
+            "bounties_completed": rep["bounties_completed"],
+            "last_heartbeat": candidate["last_heartbeat"],
+            "profile_url": candidate["profile_url"],
+            "seo_url": candidate["seo_url"],
+        })
+
+    matches.sort(key=lambda item: (-item["score"], -item["last_heartbeat"], item["agent_id"]))
+    return cors_json({
+        "ok": True,
+        "agent_id": source["agent_id"],
+        "resolved": resolved,
+        "source": {
+            "agent_id": source["agent_id"],
+            "name": source["name"],
+            "capabilities": source["capabilities"],
+            "offers": source["offers"],
+            "needs": source["needs"],
+            "topics": source["topics"],
+            "curiosities": source["curiosities"],
+            "preferred_city": source["preferred_city"],
+        },
+        "matches": matches[:limit],
+    })
+
+
 @app.route("/api/bounties", methods=["GET", "OPTIONS"])
 def api_bounties():
     """List all bounty contracts."""
@@ -2117,6 +2346,7 @@ def relay_ping():
     health_data = data.get("health", None)
     provider = data.get("provider", "beacon").strip()
     preferred_city = data.get("preferred_city", "").strip()
+    profile_meta = _merge_collab_metadata({}, data)
     
     # Security fields
     signature_hex = data.get("signature", "").strip()
@@ -2221,8 +2451,7 @@ def relay_ping():
         if health_data:
             meta["last_health"] = health_data
         meta["last_ip"] = ip
-        if preferred_city:
-            meta["preferred_city"] = preferred_city
+        meta = _merge_collab_metadata(meta, data)
         db.execute(
             "UPDATE relay_agents SET last_heartbeat = ?, beat_count = ?, status = ?, metadata = ?,"
             " name = CASE WHEN name = '' OR name = agent_id THEN ? ELSE name END"
@@ -2300,15 +2529,11 @@ def relay_ping():
             "INSERT INTO relay_agents"
             " (agent_id, pubkey_hex, model_id, provider, capabilities, webhook_url,"
             "  relay_token, token_expires, name, status, beat_count, registered_at, last_heartbeat, metadata, origin_ip)"
-            " VALUES (?,?,?,?,?,'',?,?,?,'active',1,?,?,'{}',?)",
+            " VALUES (?,?,?,?,?,'',?,?,?,'active',1,?,?,?,?)",
             (agent_id, pubkey_hex, name, provider,
              json.dumps(capabilities if isinstance(capabilities, list) else []),
-             auto_token, now + RELAY_TOKEN_TTL_S, name, now, now, ip))
+             auto_token, now + RELAY_TOKEN_TTL_S, name, now, now, json.dumps(profile_meta), ip))
         db.commit()
-        # Store preferred_city in metadata
-        if preferred_city:
-            meta_new = json.dumps({"preferred_city": preferred_city})
-            db.execute("UPDATE relay_agents SET metadata = ? WHERE agent_id = ?", (meta_new, agent_id))
         db.execute("INSERT INTO relay_log (ts, action, agent_id, detail) VALUES (?, 'auto_register', ?, ?)",
                    (now, agent_id, json.dumps({"name": name, "provider": provider, "ip": ip, "source": "ping", "preferred_city": preferred_city, "signature_verified": sig_result is True})))
         db.commit()
@@ -2807,6 +3032,7 @@ def relay_heartbeat_seo():
     if health_data:
         meta["last_health"] = health_data
     meta["last_ip"] = get_real_ip()
+    meta = _merge_collab_metadata(meta, data)
 
     # Update SEO fields
     seo_updates = ""
