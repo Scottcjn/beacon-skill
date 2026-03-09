@@ -1563,7 +1563,7 @@ def cmd_trust_block(args: argparse.Namespace) -> int:
     mgr = TrustManager()
     reason = getattr(args, "reason", "") or ""
     mgr.block(args.agent_id, reason=reason)
-    print(json.dumps({"ok": True, "blocked": args.agent_id, "reason": reason}))
+    print(json.dumps({"ok": True, "blocked": args.agent_id, "reason": reason, "status": "blocked"}))
     return 0
 
 
@@ -1571,7 +1571,7 @@ def cmd_trust_unblock(args: argparse.Namespace) -> int:
     from .trust import TrustManager
     mgr = TrustManager()
     mgr.unblock(args.agent_id)
-    print(json.dumps({"ok": True, "unblocked": args.agent_id}))
+    print(json.dumps({"ok": True, "released": args.agent_id, "status": "released"}))
     return 0
 
 
@@ -1580,6 +1580,31 @@ def cmd_trust_blocked(args: argparse.Namespace) -> int:
     mgr = TrustManager()
     blocked = mgr.blocked_list()
     print(json.dumps(blocked, indent=2))
+    return 0
+
+
+def cmd_trust_hold(args: argparse.Namespace) -> int:
+    from .trust import TrustManager
+    mgr = TrustManager()
+    reason = getattr(args, "reason", "") or ""
+    mgr.hold(args.agent_id, reason=reason)
+    print(json.dumps({"ok": True, "held": args.agent_id, "reason": reason, "status": "needs_review"}))
+    return 0
+
+
+def cmd_trust_release(args: argparse.Namespace) -> int:
+    from .trust import TrustManager
+    mgr = TrustManager()
+    note = getattr(args, "note", "") or ""
+    mgr.release(args.agent_id, reviewer_note=note)
+    print(json.dumps({"ok": True, "released": args.agent_id, "status": "released", "note": note}))
+    return 0
+
+
+def cmd_trust_reviewed(args: argparse.Namespace) -> int:
+    from .trust import TrustManager
+    mgr = TrustManager()
+    print(json.dumps(mgr.review_list(), indent=2))
     return 0
 
 
@@ -4998,12 +5023,25 @@ def main(argv: Optional[List[str]] = None) -> None:
     sp.add_argument("--reason", default="", help="Reason for blocking")
     sp.set_defaults(func=cmd_trust_block)
 
+    sp = trust_sub.add_parser("hold", help="Put an agent into review hold")
+    sp.add_argument("agent_id", help="Agent ID (bcn_...)")
+    sp.add_argument("--reason", default="", help="Reason for review hold")
+    sp.set_defaults(func=cmd_trust_hold)
+
     sp = trust_sub.add_parser("unblock", help="Unblock an agent")
     sp.add_argument("agent_id", help="Agent ID (bcn_...)")
     sp.set_defaults(func=cmd_trust_unblock)
 
+    sp = trust_sub.add_parser("release", help="Release an agent from review/block")
+    sp.add_argument("agent_id", help="Agent ID (bcn_...)")
+    sp.add_argument("--note", default="", help="Reviewer note")
+    sp.set_defaults(func=cmd_trust_release)
+
     sp = trust_sub.add_parser("blocked", help="List blocked agents")
     sp.set_defaults(func=cmd_trust_blocked)
+
+    sp = trust_sub.add_parser("reviewed", help="List trust review registry")
+    sp.set_defaults(func=cmd_trust_reviewed)
 
     # Feed
     feed_p = sub.add_parser("feed", help="Filtered feed of relevant events")

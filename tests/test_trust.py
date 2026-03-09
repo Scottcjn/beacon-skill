@@ -56,6 +56,24 @@ class TestTrust(unittest.TestCase):
         mgr2 = self._mgr()
         self.assertTrue(mgr2.is_blocked("bcn_persist"))
 
+    def test_hold_release_review_flow(self):
+        mgr = self._mgr()
+        mgr.hold("bcn_hold", reason="needs coaching")
+        self.assertEqual(mgr.review_status("bcn_hold"), "needs_review")
+        self.assertFalse(mgr.is_blocked("bcn_hold"))
+        ok, reason = mgr.can_interact("bcn_hold")
+        self.assertFalse(ok)
+        self.assertEqual(reason, "needs_review")
+
+        review = mgr.review_list()
+        self.assertEqual(review["bcn_hold"]["reason"], "needs coaching")
+
+        mgr.release("bcn_hold", reviewer_note="manual release")
+        self.assertEqual(mgr.review_status("bcn_hold"), "ok")
+        ok, reason = mgr.can_interact("bcn_hold")
+        self.assertTrue(ok)
+        self.assertEqual(reason, "")
+
     def test_empty_score(self):
         mgr = self._mgr()
         s = mgr.score("bcn_unknown")

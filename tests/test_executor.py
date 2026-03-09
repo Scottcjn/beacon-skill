@@ -18,6 +18,7 @@ class TestExecutor(unittest.TestCase):
         self.conversations = ConversationManager(data_dir=self.data_dir, my_agent_id="bcn_me")
         self.trust_mgr = MagicMock()
         self.trust_mgr.is_blocked.return_value = False
+        self.trust_mgr.can_interact.return_value = (True, "")
         self.trust_mgr.record = MagicMock()
         self.presence_mgr = MagicMock()
         self.presence_mgr.get_agent.return_value = None
@@ -49,7 +50,7 @@ class TestExecutor(unittest.TestCase):
         self.assertEqual(self.outbox.count_pending(), 1)
 
     def test_queue_rule_blocked_agent_skipped(self):
-        self.trust_mgr.is_blocked.return_value = True
+        self.trust_mgr.can_interact.return_value = (False, "blocked")
         ex = self._executor()
         action = {"action": "reply", "envelope": {"kind": "hello", "to": "bcn_bad"}}
         aid = ex.queue_rule_action(action, {})
@@ -71,9 +72,16 @@ class TestExecutor(unittest.TestCase):
         self.assertIn("python", item["envelope"].get("text", ""))
 
     def test_queue_contact_blocked_skipped(self):
-        self.trust_mgr.is_blocked.return_value = True
+        self.trust_mgr.can_interact.return_value = (False, "blocked")
         ex = self._executor()
         match = {"agent_id": "bcn_blocked"}
+        aid = ex.queue_contact(match)
+        self.assertIsNone(aid)
+
+    def test_queue_contact_review_hold_skipped(self):
+        self.trust_mgr.can_interact.return_value = (False, "needs_review")
+        ex = self._executor()
+        match = {"agent_id": "bcn_review"}
         aid = ex.queue_contact(match)
         self.assertIsNone(aid)
 
@@ -199,7 +207,7 @@ class TestExecutor(unittest.TestCase):
         ex = self._executor()
         ex.queue_emit({"kind": "test", "to": "bcn_evil"})
         # Block after queuing
-        self.trust_mgr.is_blocked.return_value = True
+        self.trust_mgr.can_interact.return_value = (False, "blocked")
         results = ex.drain()
         self.assertEqual(results[0]["status"], "skipped")
         self.assertEqual(results[0]["reason"], "blocked")
@@ -225,11 +233,18 @@ class TestExecutor(unittest.TestCase):
         mock_transport.assert_not_called()
 
     def test_can_execute_blocked(self):
-        self.trust_mgr.is_blocked.return_value = True
+        self.trust_mgr.can_interact.return_value = (False, "blocked")
         ex = self._executor()
         ok, reason = ex._can_execute({"target_agent_id": "bcn_bad"})
         self.assertFalse(ok)
         self.assertEqual(reason, "blocked")
+
+    def test_can_execute_needs_review(self):
+        self.trust_mgr.can_interact.return_value = (False, "needs_review")
+        ex = self._executor()
+        ok, reason = ex._can_execute({"target_agent_id": "bcn_review"})
+        self.assertFalse(ok)
+        self.assertEqual(reason, "needs_review")
 
     def test_can_execute_ok(self):
         ex = self._executor()

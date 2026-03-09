@@ -46,8 +46,9 @@ class ActionExecutor:
             ev_env = event.get("envelope") or event
             target = ev_env.get("agent_id", "")
 
-        # Pre-flight: don't queue for blocked agents
-        if target and self._trust_mgr and self._trust_mgr.is_blocked(target):
+        # Pre-flight: don't queue for blocked or review-held agents
+        ok, _reason = self._trust_gate(target)
+        if target and not ok:
             return None
 
         transport_hint = self._guess_transport(target)
@@ -73,7 +74,8 @@ class ActionExecutor:
             return None
 
         # Guards
-        if self._trust_mgr and self._trust_mgr.is_blocked(target):
+        ok, _reason = self._trust_gate(target)
+        if not ok:
             return None
         if self._match_mgr and not self._match_mgr.can_contact(target):
             return None
@@ -115,7 +117,8 @@ class ActionExecutor:
         if not target:
             return None
 
-        if self._trust_mgr and self._trust_mgr.is_blocked(target):
+        ok, _reason = self._trust_gate(target)
+        if not ok:
             return None
         if self._conversations and self._conversations.is_waiting_for_reply(target):
             return None
@@ -208,7 +211,16 @@ class ActionExecutor:
     def _can_execute(self, item: Dict[str, Any]) -> Tuple[bool, str]:
         """Pre-flight checks before sending."""
         target = item.get("target_agent_id", "")
-        if target and self._trust_mgr and self._trust_mgr.is_blocked(target):
+        return self._trust_gate(target)
+
+    def _trust_gate(self, target: str) -> Tuple[bool, str]:
+        """Interpret trust manager review/blocked state consistently."""
+        if not target or not self._trust_mgr:
+            return True, ""
+        if hasattr(self._trust_mgr, "can_interact"):
+            ok, reason = self._trust_mgr.can_interact(target)
+            return bool(ok), str(reason or "")
+        if self._trust_mgr.is_blocked(target):
             return False, "blocked"
         return True, ""
 
