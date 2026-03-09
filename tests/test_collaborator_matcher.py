@@ -179,6 +179,26 @@ def test_agent_profile_page_renders_match_section(client):
     assert "Profile Match" in html
 
 
+def test_agent_profile_page_renders_trust_section(client):
+    _insert_relay_agent(
+        "bcn_profile_trust",
+        name="Profile Trust",
+        capabilities=["research"],
+        metadata={"offers": ["docs"]},
+    )
+    mgr = TrustManager(data_dir=beacon_chat.TRUST_DATA_DIR)
+    mgr.hold("bcn_profile_trust", reason="needs coaching", reviewer_note="slow down")
+    mgr.record("bcn_profile_trust", "in", "message", outcome="ok")
+
+    resp = client.get("/beacon/agent/bcn_profile_trust")
+
+    assert resp.status_code == 200
+    html = resp.get_data(as_text=True)
+    assert "Trust Review" in html
+    assert "needs coaching" in html
+    assert "Interaction Total" in html
+
+
 def test_trust_review_endpoint_reports_hold_status(client):
     mgr = TrustManager(data_dir=beacon_chat.TRUST_DATA_DIR)
     mgr.hold("bcn_trust_hold", reason="needs coaching", reviewer_note="slow down spammy outreach")

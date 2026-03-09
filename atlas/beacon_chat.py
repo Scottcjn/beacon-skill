@@ -2661,6 +2661,7 @@ def _agent_profile_html(agent, caps, dns_names, profile=None, matches=None):
         "preferred_city": "",
     }
     matches = matches or []
+    trust = trust_snapshot(aid)
 
     # Schema.org JSON-LD — SoftwareApplication
     jsonld = json.dumps({
@@ -2764,6 +2765,25 @@ def _agent_profile_html(agent, caps, dns_names, profile=None, matches=None):
             "<ul>" + "".join(match_items) + "</ul>"
         )
 
+    trust_badge_class = "status active" if trust["can_interact"] else "status presumed_dead"
+    trust_block = (
+        "<h2>Trust Review</h2>"
+        "<table>"
+        f"<tr><td>Review Status</td><td><span class=\"{trust_badge_class}\">{trust['review_status']}</span></td></tr>"
+        f"<tr><td>Can Interact</td><td>{'yes' if trust['can_interact'] else 'needs review'}</td></tr>"
+        f"<tr><td>Trust Score</td><td>{trust['trust_score']}</td></tr>"
+        f"<tr><td>Interaction Total</td><td>{trust['interaction_total']}</td></tr>"
+        + (
+            f"<tr><td>Review Reason</td><td>{trust['review_reason']}</td></tr>"
+            if trust["review_reason"] else ""
+        )
+        + (
+            f"<tr><td>Reviewer Note</td><td>{trust['reviewer_note']}</td></tr>"
+            if trust["reviewer_note"] else ""
+        )
+        + "</table>"
+    )
+
     links_html = "\n".join(f"<li>{lk}</li>" for lk in dofollow_links)
 
     return f"""<!DOCTYPE html>
@@ -2808,6 +2828,7 @@ ul {{ list-style: none; padding: 0; }} li {{ padding: 4px 0; }}
 <ul>{"".join(f"<li>{c}</li>" for c in (caps or ["general"]))}</ul>
 {collab_block}
 {match_block}
+{trust_block}
 {dns_block}
 <h2>Agent Details</h2>
 <table>
