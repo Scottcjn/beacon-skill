@@ -1776,6 +1776,71 @@ def api_all_agents():
         return resp, 204
 
     # Native agents from AGENT_PERSONAS
+    # ... code continues untouched ...
+    
+@app.route("/beacon/join", methods=["POST", "OPTIONS"])
+def api_beacon_join():
+    """Register a new external agent via the beacon network."""
+    if request.method == "OPTIONS":
+        resp = jsonify({})
+        resp.headers["Access-Control-Allow-Origin"] = "*"
+        resp.headers["Access-Control-Allow-Methods"] = "POST"
+        resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
+        return resp, 204
+
+    data = request.json or {}
+    
+    agent_id = data.get("agent_id")
+    pubkey_hex = data.get("pubkey_hex")
+    
+    if not agent_id or not pubkey_hex:
+        return cors_json({"error": "Missing agent_id or pubkey_hex"}, 400)
+        
+    if len(pubkey_hex) != 64 or not all(c in "0123456789abcdefABCDEF" for c in pubkey_hex):
+        return cors_json({"error": "Invalid pubkey_hex format"}, 400)
+        
+    persona = data.get("persona", "Unknown relay agent")
+    provider = data.get("provider", "External")
+    capabilities = data.get("capabilities", [])
+    
+    # Save to SQLite
+    try:
+        conn = sqlite3.connect(ATLAS_DB_PATH)
+        c = conn.cursor()
+        c.execute("""
+            INSERT INTO relay_agents (agent_id, pubkey_hex, persona, provider, created_at, last_seen)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(agent_id) DO UPDATE SET
+                pubkey_hex=excluded.pubkey_hex,
+                persona=excluded.persona,
+                provider=excluded.provider,
+                last_seen=excluded.last_seen
+        """, (
+            agent_id, 
+            pubkey_hex, 
+            persona, 
+            provider, 
+            int(time.time()), 
+            int(time.time())
+        ))
+        
+        # Clear old capabilities and insert new ones
+        c.execute("DELETE FROM relay_agent_capabilities WHERE agent_id=?", (agent_id,))
+        for cap in capabilities:
+            if cap and isinstance(cap, str):
+                c.execute("INSERT INTO relay_agent_capabilities (agent_id, capability) VALUES (?, ?)", (agent_id, cap[:100]))
+                
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        app.logger.error(f"Error registering agent {agent_id}: {e}")
+        return cors_json({"error": "Database error"}, 500)
+
+    return cors_json({
+        "status": "registered",
+        "agent_id": agent_id,
+        "tier": "agent"
+    }, 201)
     agents = []
     for aid, persona in AGENT_PERSONAS.items():
         agents.append({
