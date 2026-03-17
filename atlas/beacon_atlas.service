@@ -1,0 +1,14 @@
+[Unit]
+Description=Beacon Atlas Chat Server
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/beacon-skill/atlas
+ExecStart=/usr/bin/python3 beacon_chat.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
