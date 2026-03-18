@@ -762,3 +762,66 @@ See [scorecard/README.md](scorecard/README.md) for full docs.
 [⭐ Star Rustchain](https://github.com/Scottcjn/Rustchain) · [📊 Q1 2026 Traction Report](https://github.com/Scottcjn/Rustchain/blob/main/docs/DEVELOPER_TRACTION_Q1_2026.md) · [Follow @Scottcjn](https://github.com/Scottcjn)
 
 </div>
+
+
+## Replay Protection
+
+Beacon uses a nonce + timestamp strategy to prevent replay attacks in multi-agent meshes.
+
+### Pattern Overview
+
+```python
+import time
+from beacon_skill import BeaconEnvelope
+
+# 1. Include monotonic nonce + Unix timestamp in every signed message
+nonce = generate_monotonic_nonce()  # Incrementing counter
+timestamp = int(time.time())        # Current Unix timestamp
+
+envelope = BeaconEnvelope(
+    kind="message",
+    payload={"text": "Hello"},
+    nonce=nonce,
+    timestamp=timestamp
+)
+
+# 2. Sign the full payload including nonce + timestamp
+envelope.sign(private_key)
+```
+
+### Server-Side Validation
+
+```python
+def validate_message(envelope):
+    # Check timestamp freshness (30 second window)
+    if abs(time.time() - envelope.timestamp) > 30:
+        raise ReplayError("TIMESTAMP_STALE", "Message timestamp is too old")
+    
+    # Check nonce uniqueness (sliding window)
+    if nonce_store.has_seen(envelope.nonce):
+        raise ReplayError("NONCE_REUSED", "Nonce has been seen before")
+    
+    # Verify signature covers full payload
+    if not envelope.verify():
+        raise ReplayError("SIGNATURE_INVALID", "Signature verification failed")
+    
+    nonce_store.record(envelope.nonce)
+    return True
+```
+
+### Error Codes
+
+| Code | Description | Resolution |
+|------|-------------|------------|
+| `TIMESTAMP_STALE` | Message timestamp > 30s old | Regenerate message with fresh timestamp |
+| `NONCE_REUSED` | Nonce was seen before | Use monotonically increasing nonce |
+| `SIGNATURE_INVALID` | Signature doesn't match payload | Check signing key and payload integrity |
+
+### Idempotency for Retries
+
+When retrying failed deliveries:
+- Use the **same nonce** for the same logical message
+- Servers cache processed nonces for 5 minutes
+- Duplicate nonces within the cache window return the cached response
+
+See [docs/SECURITY.md](docs/SECURITY.md) for complete security patterns.
