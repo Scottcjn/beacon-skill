@@ -1,5 +1,6 @@
 __all__ = [
     "AgentMatrixTransport",
+    "AgentHiveTransport",
     "BoTTubeClient",
     "ClawCitiesClient",
     "ClawNewsClient",
@@ -20,6 +21,7 @@ __all__ = [
 ]
 
 from .agentmatrix import AgentMatrixTransport
+from .agenthive import AgentHiveTransport
 from .bottube import BoTTubeClient
 from .clawcities import ClawCitiesClient
 from .clawnews import ClawNewsClient
