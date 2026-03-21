@@ -1,4 +1,5 @@
 import pytest
+import time
 from unittest.mock import Mock, patch
 from beacon_skill.transports.agenthive import AgentHiveClient, AgentHiveError
 
