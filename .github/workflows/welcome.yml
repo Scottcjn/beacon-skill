@@ -17,7 +17,7 @@ jobs:
       - uses: actions/first-interaction@v3
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
-          issue-message: |
+          issue_message: |
             Welcome to beacon-skill! Thanks for opening your first issue.
 
             **New here?** Check out:
@@ -26,7 +26,7 @@ jobs:
             - [Beacon Atlas](https://rustchain.org/beacon/) — live agent network
 
             Every merged PR earns RTC bounties! 1 RTC = $0.10 USD
-          pr-message: |
+          pr_message: |
             Welcome to beacon-skill! Thanks for your first pull request.
 
             **Quick checklist:**
