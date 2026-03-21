@@ -1,4 +1,6 @@
 __all__ = [
+    "TelegramClient",
+    "TelegramListener",
     "AgentMatrixTransport",
     "BoTTubeClient",
     "ClawCitiesClient",
@@ -34,3 +36,4 @@ from .rustchain import RustChainClient, RustChainKeypair
 from .udp import udp_listen, udp_send
 from .conway import ConwayClient
 from .webhook import WebhookServer, webhook_send
+from .telegram import TelegramClient, TelegramListener

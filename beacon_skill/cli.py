@@ -129,7 +129,7 @@ _ROLE_PRESETS = {
 _ALL_KINDS = ["like", "want", "bounty", "ad", "hello", "link", "event", "pay",
               "pulse", "offer", "accept", "deliver", "confirm", "subscribe",
               "mayday", "heartbeat", "accord"]
-_ALL_TRANSPORTS = ["udp", "webhook", "discord", "bottube", "moltbook", "clawcities", "clawsta", "fourclaw", "pinchedin", "clawtasks", "clawnews", "rustchain"]
+_ALL_TRANSPORTS = ["udp", "webhook", "telegram", "discord", "bottube", "moltbook", "clawcities", "clawsta", "fourclaw", "pinchedin", "clawtasks", "clawnews", "rustchain"]
 _TOPIC_SUGGESTIONS = [
     "ai", "blockchain", "gaming", "vintage-hardware", "music",
     "art", "science", "finance", "devtools", "security",
@@ -1138,6 +1138,71 @@ def cmd_clawnews_search(args: argparse.Namespace) -> int:
 
 
 # ── Discord ──
+
+
+def _telegram_client(cfg: Dict[str, Any], bot_token: Optional[str] = None) -> Any:
+    from .transports.telegram import TelegramClient
+    token = bot_token or _cfg_get(cfg, "telegram", "bot_token", default="")
+    if not token:
+        logger.error("Missing telegram.bot_token in config or --bot-token.")
+        sys.exit(1)
+    timeout_s = int(_cfg_get(cfg, "telegram", "timeout_s", default=20) or 20)
+    return TelegramClient(bot_token=token, timeout_s=timeout_s)
+
+def cmd_telegram_send(args: argparse.Namespace) -> int:
+    cfg = _load_config(args.config)
+    setup_logging(args.verbose)
+    from .transports.telegram import TelegramClient
+    
+    extra, links = _parse_extra_and_links(args)
+    kind = getattr(args, "kind", "hello")
+    identity, _ = _ensure_identity(cfg, args)
+    
+    env = _build_envelope(cfg, kind, "telegram:webhook", links, extra, identity=identity)
+    
+    token = args.bot_token or _cfg_get(cfg, "telegram", "bot_token", default="")
+    if not token:
+        logger.error("Missing bot_token.")
+        return 1
+        
+    client = TelegramClient(bot_token=token)
+    try:
+        res = client.send_message(args.chat_id, args.text, envelope=env)
+        if args.json:
+            print(json.dumps(res))
+        else:
+            print("Telegram message sent successfully.")
+            return 0
+    except Exception as e:
+        logger.error(f"Failed to send: {e}")
+        return 1
+    return 0
+
+def cmd_telegram_listen(args: argparse.Namespace) -> int:
+    cfg = _load_config(args.config)
+    setup_logging(args.verbose)
+    from .transports.telegram import TelegramListener
+    
+    token = args.bot_token or _cfg_get(cfg, "telegram", "bot_token", default="")
+    if not token:
+        logger.error("Missing bot_token.")
+        return 1
+        
+    listener = TelegramListener(bot_token=token)
+    
+    def on_env(env_obj):
+        if args.json:
+            print(json.dumps(env_obj))
+        else:
+            chat = env_obj.get("chat_id")
+            txt = env_obj.get("text")
+            print(f"[Telegram] {chat}: {txt}")
+            
+    try:
+        listener.run_sync(on_env)
+    except KeyboardInterrupt:
+        print("\nExiting Telegram listener.")
+    return 0
 
 def _discord_client(cfg=None, webhook_url: Optional[str] = None) -> DiscordClient:
     cfg = cfg or load_config()
@@ -4934,6 +4999,19 @@ def main(argv: Optional[List[str]] = None) -> None:
     sp.set_defaults(func=cmd_webhook_send)
 
     # Discord
+    tg = sub.add_parser("telegram", help="Telegram bot transport")
+    tg_sub = tg.add_subparsers(dest="tcmd", required=True)
+    
+    sp_send = tg_sub.add_parser("send", help="Send message to Telegram")
+    sp_send.add_argument("--bot-token", default=None, help="Telegram bot token")
+    sp_send.add_argument("--chat-id", required=True, help="Telegram chat ID")
+    sp_send.add_argument("--text", required=True, help="Message text")
+    sp_send.add_argument("--kind", default="hello", help="Envelope kind")
+    sp_send.add_argument("--link", action="append", default=[], help="Attach a link")
+    
+    sp_listen = tg_sub.add_parser("listen", help="Listen for Telegram webhook updates")
+    sp_listen.add_argument("--bot-token", default=None, help="Telegram bot token")
+    
     dc = sub.add_parser("discord", help="Discord webhook transport")
     dc_sub = dc.add_subparsers(dest="dcmd", required=True)
 
