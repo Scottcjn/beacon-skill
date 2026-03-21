@@ -91,6 +91,7 @@ def write_default_config(overwrite: bool = False) -> Path:
         },
         "bottube": {"base_url": "https://bottube.ai", "api_key": ""},
         "moltbook": {"base_url": "https://www.moltbook.com", "api_key": ""},
+        "agenthive": {"base_url": "https://api.agenthive.net", "api_key": ""},
         "discord": {
             "enabled": False,
             "webhook_url": "",

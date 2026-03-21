@@ -129,7 +129,7 @@ _ROLE_PRESETS = {
 _ALL_KINDS = ["like", "want", "bounty", "ad", "hello", "link", "event", "pay",
               "pulse", "offer", "accept", "deliver", "confirm", "subscribe",
               "mayday", "heartbeat", "accord"]
-_ALL_TRANSPORTS = ["udp", "webhook", "discord", "bottube", "moltbook", "clawcities", "clawsta", "fourclaw", "pinchedin", "clawtasks", "clawnews", "rustchain"]
+_ALL_TRANSPORTS = ["udp", "webhook", "discord", "bottube", "moltbook", "agenthive", "clawcities", "clawsta", "fourclaw", "pinchedin", "clawtasks", "clawnews", "rustchain"]
 _TOPIC_SUGGESTIONS = [
     "ai", "blockchain", "gaming", "vintage-hardware", "music",
     "art", "science", "finance", "devtools", "security",
@@ -354,6 +354,11 @@ def cmd_init(args: argparse.Namespace) -> int:
             "base_url": "https://www.moltbook.com",
             "api_key": "",
             "enabled": "moltbook" in enabled_transports,
+        },
+        "agenthive": {
+            "base_url": "https://api.agenthive.net",
+            "api_key": "",
+            "enabled": "agenthive" in enabled_transports,
         },
         "discord": {
             "enabled": "discord" in enabled_transports,
@@ -797,6 +802,30 @@ def cmd_bottube_ping_video(args: argparse.Namespace) -> int:
 
 
 # ── Moltbook ──
+
+
+
+def cmd_agenthive_post(args: argparse.Namespace) -> int:
+    """Post to AgentHive."""
+    from .transports.agenthive import AgentHiveClient
+    cfg = args._cfg if hasattr(args, "_cfg") else load_config(args.root_dir)
+    client = AgentHiveClient(
+        base_url=_cfg_get(cfg, "agenthive", "base_url", default="https://api.agenthive.net"),
+        api_key=_cfg_get(cfg, "agenthive", "api_key", default=None) or "",
+    )
+    try:
+        result = client.post_message(args.message, force=getattr(args, "force", False))
+    except Exception as e:
+        print(f"AgentHive error: {e}", file=sys.stderr)
+        return 1
+
+    append_jsonl("outbox.jsonl", {"platform": "agenthive", "post": {"message": args.message}, "result": result, "ts": int(time.time())})
+    print(json.dumps({
+        "status": "ok",
+        "platform": "agenthive",
+        "result": result
+    }))
+    return 0
 
 def cmd_moltbook_upvote(args: argparse.Namespace) -> int:
     cfg = load_config()
@@ -4721,6 +4750,16 @@ def main(argv: Optional[List[str]] = None) -> None:
     sp.set_defaults(func=cmd_bottube_ping_video)
 
     # Moltbook
+
+    # agenthive
+    ah = sub.add_parser("agenthive", help="AgentHive platform pings (post)")
+    ah_sub = ah.add_subparsers(dest="ah_cmd", required=True)
+    
+    sp = ah_sub.add_parser("post", help="Post an update to AgentHive")
+    sp.add_argument("message", help="Message to post")
+    sp.add_argument("--force", action="store_true", help="Bypass local rate limit")
+    sp.set_defaults(func=cmd_agenthive_post)
+
     molt = sub.add_parser("moltbook", help="Moltbook pings (upvote/post)")
     msub = molt.add_subparsers(dest="mcmd", required=True)
 
