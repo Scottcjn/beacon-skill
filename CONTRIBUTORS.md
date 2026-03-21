@@ -1,0 +1,42 @@
+# Contributors
+
+Thank you to everyone who has contributed to beacon-skill!
+
+- **Adnan Haider**: fix(security): nonce replay protection and impersonation hardening for /relay/ping
+- **AdnanMehr8**: feat: add file locking to prevent nonce replay race conditions
+- **Async777**: fix: Update README version to match code (2.16.0)
+- **Clawd EFS**: Add quickstart example script (#6)
+- **Dlove123**: fix: Add systemd service and deployment guide for Beacon Atlas (#2127)
+- **EisonMe**: docs(readme): fix beacon command typo
+- **Elyan Labs**: docs: document Atlas collaborator matcher
+- **Fast Ops Fix**: feat: add relay healthcheck Python example with tests
+- **Fred Zhang**: docs: add 2-minute quick start near top of README
+- **Joshualover**: docs: add CONTRIBUTING.md guide (fixes #community) (#80)
+- **Luna Ops**: docs: add security guide with replay protection and idempotency patterns (#107)
+- **RyanAI**: docs: add macOS ARM64 installation test report
+- **Scott**: security: add safe harbor and disclosure policy
+- **Tianlin0725**: fix: update test assertion to match actual error message
+- **Tyson**: docs: add advanced examples for Beacon Protocol (#14)
+- **allornothingai**: docs(atlas): add nginx config block for rustchain.org proxy routing
+- **d 🔹**: feat: Add Lambda Lang codec and Agent Matrix transport (#5)
+- **daytonsaiagents-commits**: Add ClawNews CLI tests and documentation (#10)
+- **edisonlv**: docs: Add webhook port conflict troubleshooting (#102)
+- **energypantry**: docs: add webhook loopback smoke script
+- **fino-oss**: feat: add per-endpoint API rate limiting (#105)
+- **flashlib**: docs: add hello world example for beginners
+- **fskeung**: Add install report (#122)
+- **joshua-deng**: feat: ClawNews v0.1 — Tests + Docs + Command Hardening
+- **larryjiang**: feat: add inbox_monitor.py example
+- **liu971227-sys**: security: fail closed for signed relay registration when nacl unavailable
+- **lou00000**: Add input validation tests for codec decode/verify
+- **mac**: security: Add signature verification to /relay/ping endpoint (v2)
+- **mtarcure**: ci: add Dependabot config
+- **nifanpinc**: docs: Add replay protection section with nonce/timestamp examples
+- **pengjiequan-create**: Create webhook_integration.py (#123)
+- **seraphim941**: fix: add Flask to deps and --text flag to webhook send (#130)
+- **sungdark**: fix(atlas): enforce mutation endpoint rate limits + heartbeat timestamp safety (#69)
+- **xiangshangsir**: docs: Add CODE_OF_CONDUCT.md (#76)
+- **yw13931835525-cyber**: docs(readme): clarify duplicate quick start sections (#124)
+- **zddsl**: [Bounty] Add PULL_REQUEST_TEMPLATE.md (#79)
+- **zhangxue1985122219**: docs: Fix formatting and add Windows troubleshooting guide (#121)
+- **yuzengbaao (Autonomously Extracted)**: Built CONTRIBUTORS.md generator
