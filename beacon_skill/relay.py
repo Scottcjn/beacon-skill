@@ -329,6 +329,70 @@ class RelayManager:
             },
         }
 
+
+    def batch_heartbeat(
+        self,
+        heartbeats: List[Dict[str, Any]],
+        default_token: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Process a batched relay heartbeat.
+
+        Args:
+            heartbeats: List of dicts, each with 'agent_id', 'status', and optionally 'token', 'health'.
+            default_token: Token to use if a heartbeat doesn't provide one.
+        """
+        results = {}
+        agents = self._load_agents()
+        now = int(time.time())
+        dirty = False
+
+        for hb in heartbeats:
+            agent_id = hb.get("agent_id")
+            token = hb.get("token") or default_token
+            status = hb.get("status", "alive")
+            health = hb.get("health")
+
+            if not agent_id:
+                continue
+
+            agent_data = agents.get(agent_id)
+            if not agent_data:
+                results[agent_id] = {"error": "Agent not registered", "code": "NOT_FOUND"}
+                continue
+
+            if agent_data.get("relay_token") != token:
+                results[agent_id] = {"error": "Invalid relay token", "code": "AUTH_FAILED"}
+                continue
+                
+            if agent_data.get("token_expires", 0) < now:
+                results[agent_id] = {"error": "Token expired — re-register", "code": "TOKEN_EXPIRED"}
+                continue
+
+            # Update heartbeat state
+            agent_data["last_heartbeat"] = now
+            agent_data["beat_count"] = agent_data.get("beat_count", 0) + 1
+            agent_data["status"] = status
+
+            # Refresh token TTL
+            agent_data["token_expires"] = now + RELAY_TOKEN_TTL_S
+
+            if health:
+                agent_data.setdefault("metadata", {})
+                agent_data["metadata"]["last_health"] = health
+
+            results[agent_id] = {
+                "ok": True, 
+                "expires_in": RELAY_TOKEN_TTL_S,
+                "agent_id": agent_id,
+                "beat_count": agent_data["beat_count"]
+            }
+            dirty = True
+
+        if dirty:
+            self._save_agents(agents)
+
+        return {"batch_results": results}
+
     # ── Discovery ──
 
     def discover(self, provider: Optional[str] = None, capability: Optional[str] = None) -> List[Dict[str, Any]]:

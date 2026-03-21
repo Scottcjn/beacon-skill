@@ -184,6 +184,28 @@ class RelayClient:
         )
         return resp.json()
 
+    def batch_heartbeat(
+        self,
+        heartbeats: List[Dict[str, Any]],
+        token: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Send multiple heartbeats in a single request.
+
+        Args:
+            heartbeats: List of dicts, each with 'agent_id', 'status', and optionally 'health', 'token'.
+            token: Global auth token for the batch.
+        """
+        body = {
+            "heartbeats": heartbeats
+        }
+        resp = requests.post(
+            self._url("/relay/heartbeat/batch"),
+            json=body,
+            headers=self._headers(token or ""),
+            timeout=self.timeout_s,
+        )
+        return resp.json()
+
     def discover(
         self,
         provider: Optional[str] = None,
