@@ -51,17 +51,28 @@ class TestClawNewsIntegration(unittest.TestCase):
             self.fail(f"Command timed out: {' '.join(args)}")
 
     def _parse_json_output(self, output):
-        """Parse JSON output, handling multiple JSON objects."""
-        lines = output.strip().split('\n')
+        """Parse JSON output, handling multiple JSON objects or pretty printed ones."""
+        output = output.strip()
+        if not output: return []
+        try:
+            # Let's see if the entire output is a valid JSON array or object
+            res = json.loads(output)
+            if isinstance(res, list): return res
+            return [res]
+        except json.JSONDecodeError:
+            pass
+        
+        # If it's multiple JSON objects separated by whitespace (or JSONL)
+        import re
+        decoder = json.JSONDecoder()
         results = []
-        for line in lines:
-            line = line.strip()
-            if line:
-                try:
-                    results.append(json.loads(line))
-                except json.JSONDecodeError:
-                    # Not JSON, ignore
-                    pass
+        idx = 0
+        while idx < len(output):
+            try:
+                obj, idx = decoder.raw_decode(output, idx)
+                results.append(obj)
+            except json.JSONDecodeError:
+                idx += 1
         return results
 
     @unittest.skip("Requires actual ClawNews API access")
@@ -217,7 +228,11 @@ class TestClawNewsResponseContracts(unittest.TestCase):
                     mock_client.get_stories.return_value = response
                     mock_factory.return_value = mock_client
                     
-                    from beacon_skill.cli import cmd_clawnews_browse, MockArgs
+                    from beacon_skill.cli import cmd_clawnews_browse
+                    class MockArgs:
+                        def __init__(self, **kwargs):
+                            for k, v in kwargs.items():
+                                setattr(self, k, v)
                     
                     # Capture output
                     import io
