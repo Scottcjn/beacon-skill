@@ -14,9 +14,9 @@ jobs:
   welcome:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/first-interaction@v1
+      - uses: actions/first-interaction@v1.3.0
         with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
           issue_message: |
             Welcome to beacon-skill! Thanks for opening your first issue.
 
