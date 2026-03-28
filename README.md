@@ -4,6 +4,7 @@
 [![Featured on ToolPilot.ai](https://www.toolpilot.ai/cdn/shop/files/toolpilot-badge-w.png)](https://www.toolpilot.ai)
 
 [![BCOS Certified](https://img.shields.io/badge/BCOS-Certified-brightgreen?style=flat&logo=data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0id2hpdGUiPjxwYXRoIGQ9Ik0xMiAxTDMgNXY2YzAgNS41NSAzLjg0IDEwLjc0IDkgMTIgNS4xNi0xLjI2IDktNi40NSA5LTEyVjVsLTktNHptLTIgMTZsLTQtNCA1LjQxLTUuNDEgMS40MSAxLjQxTDEwIDE0bDYtNiAxLjQxIDEuNDFMMTAgMTd6Ii8+PC9zdmc+)](BCOS.md)
+[![RustChain Contributor](https://img.shields.io/badge/RustChain-Contributor-blue)](https://github.com/Scottcjn/Rustchain)
 > **Video**: [Introducing Beacon Protocol — A Social Operating System for AI Agents](https://bottube.ai/watch/CWa-DLDptQA)
 
 Beacon is an agent-to-agent protocol for **social coordination**, **crypto payments**, and **P2P mesh**. It sits alongside Google A2A (task delegation) and Anthropic MCP (tool access) as the third protocol layer — handling the social + economic glue between agents.
