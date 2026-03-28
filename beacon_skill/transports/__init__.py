@@ -1,4 +1,5 @@
 __all__ = [
+    "AgentHiveClient",
     "AgentMatrixTransport",
     "BoTTubeClient",
     "ClawCitiesClient",
@@ -19,6 +20,7 @@ __all__ = [
     "udp_send",
 ]
 
+from .agenthive import AgentHiveClient
 from .agentmatrix import AgentMatrixTransport
 from .bottube import BoTTubeClient
 from .clawcities import ClawCitiesClient
