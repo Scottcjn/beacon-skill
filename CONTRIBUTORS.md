@@ -36,6 +36,8 @@
   - *Contribution*: Added macOS ARM64 installation test report
 
 - **GitHub**: [EisonMe](https://github.com/EisonMe)
+- **GitHub**: [zhaog100](https://github.com/zhaog100)
+  - *Contribution*: Starred repository, community engagement, testing feedback
   - *Contribution*: Fixed beacon command typo in README
 
 - **GitHub**: [Async777](https://github.com/Async777)
