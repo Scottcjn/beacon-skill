@@ -73,5 +73,9 @@
     "base_url": "https://rustchain.org",
     "verify_ssl": true,
     "wallet_keystore": "~/.beacon/identity/rustchain.key"
+  },
+  "agenthive": {
+    "base_url": "https://agenthive.to",
+    "api_key": "hk_..."
   }
 }

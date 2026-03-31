@@ -10,6 +10,7 @@ from .codec import decode_envelopes, encode_envelope, verify_envelope
 from .config import load_config, write_default_config
 from .storage import append_jsonl
 from .transports import (
+    AgentHiveClient,
     BoTTubeClient,
     ClawCitiesClient,
     ClawNewsClient,
@@ -129,7 +130,7 @@ _ROLE_PRESETS = {
 _ALL_KINDS = ["like", "want", "bounty", "ad", "hello", "link", "event", "pay",
               "pulse", "offer", "accept", "deliver", "confirm", "subscribe",
               "mayday", "heartbeat", "accord"]
-_ALL_TRANSPORTS = ["udp", "webhook", "discord", "bottube", "moltbook", "clawcities", "clawsta", "fourclaw", "pinchedin", "clawtasks", "clawnews", "rustchain"]
+_ALL_TRANSPORTS = ["udp", "webhook", "discord", "bottube", "moltbook", "clawcities", "clawsta", "fourclaw", "pinchedin", "clawtasks", "clawnews", "rustchain", "agenthive"]
 _TOPIC_SUGGESTIONS = [
     "ai", "blockchain", "gaming", "vintage-hardware", "music",
     "art", "science", "finance", "devtools", "security",
@@ -383,6 +384,11 @@ def cmd_init(args: argparse.Namespace) -> int:
             "verify_ssl": False,
             "private_key_hex": "",
             "enabled": "rustchain" in enabled_transports,
+        },
+        "agenthive": {
+            "base_url": "https://agenthive.to",
+            "api_key": "",
+            "enabled": "agenthive" in enabled_transports,
         },
     }
 
@@ -1355,6 +1361,82 @@ def cmd_rustchain_pay(args: argparse.Namespace) -> int:
         "nonce": payload.get("nonce"),
         "from_address": payload.get("from_address"),
     })
+    print(json.dumps(result, indent=2))
+    return 0
+
+
+# ── AgentHive ──
+
+def cmd_agenthive_post(args: argparse.Namespace) -> int:
+    cfg = load_config()
+    identity = _load_identity(args)
+    client = AgentHiveClient(
+        base_url=_cfg_get(cfg, "agenthive", "base_url", default="https://agenthive.to"),
+        api_key=_cfg_get(cfg, "agenthive", "api_key", default=None) or None,
+    )
+
+    content = args.content
+    if args.envelope_kind:
+        env = _build_envelope(cfg, args.envelope_kind, "agenthive", args.link or [], {}, identity=identity)
+        content = f"{content}\n\n{env}"
+
+    if args.dry_run:
+        print(json.dumps({"content": content}, indent=2))
+        return 0
+    result = client.create_post(content, force=args.force)
+    append_jsonl("outbox.jsonl", {"platform": "agenthive", "post": {"content": content}, "result": result, "ts": int(time.time())})
+    _maybe_udp_emit(cfg, {
+        "platform": "agenthive",
+        "action": "post",
+    })
+    print(json.dumps(result, indent=2))
+    return 0
+
+
+def cmd_agenthive_feed(args: argparse.Namespace) -> int:
+    cfg = load_config()
+    client = AgentHiveClient(
+        base_url=_cfg_get(cfg, "agenthive", "base_url", default="https://agenthive.to"),
+        api_key=_cfg_get(cfg, "agenthive", "api_key", default=None) or None,
+    )
+    posts = client.read_feed(limit=args.limit)
+    print(json.dumps(posts, indent=2))
+    return 0
+
+
+def cmd_agenthive_follow(args: argparse.Namespace) -> int:
+    cfg = load_config()
+    client = AgentHiveClient(
+        base_url=_cfg_get(cfg, "agenthive", "base_url", default="https://agenthive.to"),
+        api_key=_cfg_get(cfg, "agenthive", "api_key", default=None) or None,
+    )
+    result = client.follow_agent(args.agent_name)
+    append_jsonl("outbox.jsonl", {"platform": "agenthive", "follow": {"agent_name": args.agent_name}, "result": result, "ts": int(time.time())})
+    print(json.dumps(result, indent=2))
+    return 0
+
+
+def cmd_agenthive_register(args: argparse.Namespace) -> int:
+    cfg = load_config()
+    client = AgentHiveClient(
+        base_url=_cfg_get(cfg, "agenthive", "base_url", default="https://agenthive.to"),
+    )
+    extra = {}
+    if args.bio:
+        extra["bio"] = args.bio
+    result = client.register_agent(args.name, **extra)
+    # Store the returned api_key in config
+    new_key = result.get("api_key")
+    if new_key:
+        cfg.setdefault("agenthive", {})["api_key"] = new_key
+        from .config import ensure_config_dir, CONFIG_NAME
+        import pathlib
+        cfg_dir = ensure_config_dir()
+        path = cfg_dir / CONFIG_NAME
+        import json as _json
+        path.write_text(_json.dumps(cfg, indent=2))
+        print(f"AgentHive api_key saved to {path}")
+    append_jsonl("outbox.jsonl", {"platform": "agenthive", "register": {"name": args.name}, "result": result, "ts": int(time.time())})
     print(json.dumps(result, indent=2))
     return 0
 
@@ -4902,6 +4984,34 @@ def main(argv: Optional[List[str]] = None) -> None:
     sp.add_argument("--private-key-hex", dest="private_key_hex", default="")
     sp.add_argument("--dry-run", action="store_true")
     sp.set_defaults(func=cmd_rustchain_pay)
+
+    sp.set_defaults(func=cmd_rustchain_pay)
+
+    # AgentHive
+    ah = sub.add_parser("agenthive", help="AgentHive microblog transport (post/feed/follow/register)")
+    ahsub = ah.add_subparsers(dest="ahcmd", required=True)
+
+    sp = ahsub.add_parser("post", help="Post a message to AgentHive (local 30-min guard)")
+    sp.add_argument("--content", required=True, help="Post text content")
+    sp.add_argument("--force", action="store_true", help="Override local 30-min posting guard")
+    sp.add_argument("--envelope-kind", default=None, help="Embed a [BEACON v2] envelope")
+    sp.add_argument("--link", action="append", default=[], help="Attach a link (repeatable)")
+    sp.add_argument("--dry-run", action="store_true")
+    sp.add_argument("--password", default=None, help="Password for encrypted identity")
+    sp.set_defaults(func=cmd_agenthive_post)
+
+    sp = ahsub.add_parser("feed", help="Read the public AgentHive timeline")
+    sp.add_argument("--limit", type=int, default=None, help="Maximum number of posts to return")
+    sp.set_defaults(func=cmd_agenthive_feed)
+
+    sp = ahsub.add_parser("follow", help="Follow another agent on AgentHive")
+    sp.add_argument("agent_name", help="Agent username/handle to follow")
+    sp.set_defaults(func=cmd_agenthive_follow)
+
+    sp = ahsub.add_parser("register", help="Register a new agent on AgentHive (no auth required)")
+    sp.add_argument("name", help="Desired agent username")
+    sp.add_argument("--bio", default=None, help="Optional agent bio")
+    sp.set_defaults(func=cmd_agenthive_register)
 
     # Agent Card
     ac = sub.add_parser("agent-card", help="Agent card (.well-known/beacon.json)")
