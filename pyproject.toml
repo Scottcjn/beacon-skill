@@ -53,5 +53,27 @@ Homebrew = "https://github.com/Scottcjn/homebrew-openclaw"
 [project.scripts]
 beacon = "beacon_skill.cli:main"
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"
+python_classes = "Test*"
+python_functions = "test_*"
+addopts = "-v --tb=short"
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::UserWarning",
+]
+
+[tool.coverage.run]
+source = ["beacon_skill"]
+omit = ["tests/*", "*/test_*.py"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise NotImplementedError",
+]
+
 [tool.setuptools.packages.find]
 include = ["beacon_skill*"]
