@@ -114,3 +114,4 @@
 
 - **GitHub**: [dependabot](https://github.com/dependabot)
   - *Contribution*: Automated dependency updates (GitHub Actions, etc.)
+- @qq511477483 — first PR contributor
