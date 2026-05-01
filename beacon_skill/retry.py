@@ -23,6 +23,7 @@ def with_retry(
     *,
     max_attempts: int = 3,
     base_delay: float = 1.0,
+    max_delay: float = 60.0,
     jitter: bool = True,
     retryable_exceptions: Optional[tuple] = None,
 ) -> T:
@@ -36,6 +37,7 @@ def with_retry(
         fn: Zero-arg callable to retry.
         max_attempts: Total attempts (including the first).
         base_delay: Base delay in seconds (doubled each retry).
+        max_delay: Maximum delay cap in seconds (prevents excessive waits).
         jitter: Add random jitter to prevent thundering herd.
         retryable_exceptions: Extra exception types to retry on.
     """
@@ -60,19 +62,26 @@ def with_retry(
                 should_retry = True
 
             # Check for HTTP status codes in error message.
+            # Use precise pattern matching to avoid false positives
+            # (e.g., "429" could match error code 1429, port 8429, etc.)
             err_str = str(e)
             for code in RETRYABLE_STATUS_CODES:
-                if f"HTTP {code}" in err_str or f"{code}" in err_str:
+                # Match "HTTP 429", "status 429", "code 429", or ":429" patterns
+                if (f"HTTP {code}" in err_str or
+                    f"status {code}" in err_str.lower() or
+                    f"code {code}" in err_str.lower() or
+                    f":{code}" in err_str):
                     should_retry = True
                     break
 
             if not should_retry or attempt == max_attempts - 1:
                 raise
 
-            # Exponential backoff.
-            delay = base_delay * (2 ** attempt)
+            # Exponential backoff with jitter and max delay cap.
+            delay = min(base_delay * (2 ** attempt), max_delay)
             if jitter:
                 delay *= 0.5 + random.random()
+                delay = min(delay, max_delay)  # Re-cap after jitter
             time.sleep(delay)
 
     raise RetryError(last_error, max_attempts)
