@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from .codec import decode_envelopes, verify_envelope
-from .storage import _dir, read_state, write_state
+from .storage import _dir, _inbox_path, read_state, write_state
 from .key_management import (
     load_known_keys,
     save_known_keys,
@@ -94,7 +94,7 @@ def read_inbox(
       - verified: True/False/None (signature verification result)
       - is_read: bool (whether this nonce was marked read)
     """
-    path = _dir() / "inbox.jsonl"
+    path = _inbox_path()
     if not path.exists():
         return []
 

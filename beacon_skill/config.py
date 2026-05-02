@@ -1,10 +1,14 @@
 import json
+import logging
 import os
 from pathlib import Path
 from typing import Any, Dict
 
 
 def _config_path() -> Path:
+    custom = os.environ.get("BEACON_CONFIG_PATH")
+    if custom:
+        return Path(custom)
     return Path.home() / ".beacon" / "config.json"
 
 
@@ -125,3 +129,24 @@ def write_default_config(overwrite: bool = False) -> Path:
         pass
 
     return path
+
+
+def is_debug_mode() -> bool:
+    """Check if verbose logging is enabled via BEACON_DEBUG env var.
+
+    Returns True when BEACON_DEBUG is set to \"1\", \"true\", \"yes\", or \"on\"
+    (case-insensitive). When enabled, configures the root \"beacon\" logger
+    to DEBUG level.
+    """
+    val = os.environ.get("BEACON_DEBUG", "0").lower()
+    if val not in ("1", "true", "yes", "on"):
+        return False
+    logger = logging.getLogger("beacon")
+    logger.setLevel(logging.DEBUG)
+    if not logger.handlers:
+        handler = logging.StreamHandler()
+        handler.setFormatter(logging.Formatter(
+            "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+        ))
+        logger.addHandler(handler)
+    return True
