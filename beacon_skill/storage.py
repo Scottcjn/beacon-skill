@@ -1,5 +1,6 @@
 import fcntl
 import json
+import os
 import time
 from contextlib import contextmanager
 from pathlib import Path
@@ -10,6 +11,16 @@ def _dir() -> Path:
     d = Path.home() / ".beacon"
     d.mkdir(parents=True, exist_ok=True)
     return d
+
+
+def _inbox_path() -> Path:
+    """Return the inbox.jsonl path, respecting BEACON_INBOX_PATH env var."""
+    custom = os.environ.get("BEACON_INBOX_PATH")
+    if custom:
+        p = Path(custom)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        return p
+    return _dir() / "inbox.jsonl"
 
 
 @contextmanager
@@ -35,6 +46,9 @@ def _safe_path(name: str) -> Path:
     """Resolve a storage name to a path, preventing directory traversal."""
     if "/" in name or "\\" in name or name.startswith("."):
         raise ValueError(f"Invalid storage name: {name!r}")
+    # Support BEACON_INBOX_PATH env var override for inbox.jsonl
+    if name == "inbox.jsonl":
+        return _inbox_path()
     path = (_dir() / name).resolve()
     base = _dir().resolve()
     if not str(path).startswith(str(base)):

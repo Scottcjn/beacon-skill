@@ -130,10 +130,18 @@ class AgentIdentity:
         d.mkdir(parents=True, exist_ok=True)
         return d
 
+    def _identity_path(self) -> Path:
+        """Return the full identity key path, respecting BEACON_IDENTITY_PATH env var."""
+        custom = os.environ.get("BEACON_IDENTITY_PATH")
+        if custom:
+            p = Path(custom)
+            p.parent.mkdir(parents=True, exist_ok=True)
+            return p
+        return self._identity_dir() / KEY_FILE_NAME
+
     def save(self, password: Optional[str] = None) -> Path:
         """Save identity to ~/.beacon/identity/agent.key (JSON, chmod 600)."""
-        d = self._identity_dir()
-        path = d / KEY_FILE_NAME
+        path = self._identity_path()
 
         data: Dict[str, Any] = {
             "version": 1,
@@ -169,7 +177,11 @@ class AgentIdentity:
     @classmethod
     def load(cls, password: Optional[str] = None) -> "AgentIdentity":
         """Load identity from ~/.beacon/identity/agent.key."""
-        path = Path.home() / ".beacon" / IDENTITY_DIR_NAME / KEY_FILE_NAME
+        custom = os.environ.get("BEACON_IDENTITY_PATH")
+        if custom:
+            path = Path(custom)
+        else:
+            path = Path.home() / ".beacon" / IDENTITY_DIR_NAME / KEY_FILE_NAME
         if not path.exists():
             raise FileNotFoundError(f"No identity found at {path}")
 
