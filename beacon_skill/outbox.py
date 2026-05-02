@@ -5,6 +5,7 @@ The executor drains pending items via transports.
 """
 
 import json
+import random
 import secrets
 import time
 from pathlib import Path
@@ -16,10 +17,26 @@ from .storage import _dir
 OUTBOX_LOG = "outbox.jsonl"
 OUTBOX_PENDING = "outbox_pending.json"
 MAX_RETRY_ATTEMPTS = 3
+BASE_RETRY_DELAY_SECONDS = 1.0
+MAX_RETRY_DELAY_SECONDS = 60.0
+RETRY_JITTER_SECONDS = 0.5
 
 
 def _gen_action_id() -> str:
     return secrets.token_hex(6)
+
+
+def _retry_delay_seconds(
+    attempts: int,
+    *,
+    base_delay: float = BASE_RETRY_DELAY_SECONDS,
+    max_delay: float = MAX_RETRY_DELAY_SECONDS,
+    jitter: float = RETRY_JITTER_SECONDS,
+) -> float:
+    delay = base_delay * (2 ** max(attempts - 1, 0))
+    if jitter > 0:
+        delay += random.uniform(0, jitter)
+    return min(delay, max_delay)
 
 
 class OutboxManager:
@@ -78,6 +95,7 @@ class OutboxManager:
             "created_at": now,
             "updated_at": now,
             "attempts": 0,
+            "next_attempt_at": now,
             "error": "",
             "conversation_id": conversation_id,
         }
@@ -91,10 +109,13 @@ class OutboxManager:
         """Return items ready to send (pending status, attempts < MAX_RETRY)."""
         data = self._read_pending()
         results = []
+        now = time.time()
         for item in data.values():
             if item.get("status") != "pending":
                 continue
             if item.get("attempts", 0) >= MAX_RETRY_ATTEMPTS:
+                continue
+            if item.get("next_attempt_at", 0) > now:
                 continue
             results.append(item)
         results.sort(key=lambda x: x.get("created_at", 0))
@@ -120,14 +141,18 @@ class OutboxManager:
             self._append_log({"action_id": action_id, "status": "failed", "error": error, "ts": int(time.time())})
 
     def mark_retry(self, action_id: str) -> None:
-        """Increment attempts counter. Item auto-fails at MAX_RETRY_ATTEMPTS."""
+        """Increment attempts counter and schedule exponential backoff."""
         pending = self._read_pending()
         if action_id in pending:
+            now = time.time()
             pending[action_id]["attempts"] = pending[action_id].get("attempts", 0) + 1
-            pending[action_id]["updated_at"] = int(time.time())
+            pending[action_id]["updated_at"] = int(now)
             if pending[action_id]["attempts"] >= MAX_RETRY_ATTEMPTS:
                 pending[action_id]["status"] = "failed"
                 pending[action_id]["error"] = "max_retries_exceeded"
+            else:
+                delay = _retry_delay_seconds(pending[action_id]["attempts"])
+                pending[action_id]["next_attempt_at"] = now + delay
             self._write_pending(pending)
 
     def get(self, action_id: str) -> Optional[Dict[str, Any]]:
