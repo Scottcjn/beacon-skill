@@ -2,8 +2,9 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
-from beacon_skill.outbox import OutboxManager, MAX_RETRY_ATTEMPTS
+from beacon_skill.outbox import OutboxManager, MAX_RETRY_ATTEMPTS, _retry_delay_seconds
 
 
 class TestOutbox(unittest.TestCase):
@@ -58,6 +59,36 @@ class TestOutbox(unittest.TestCase):
         self.assertEqual(item["attempts"], 1)
         self.assertEqual(item["status"], "pending")
 
+    @mock.patch("beacon_skill.outbox.random.uniform", return_value=0)
+    def test_retry_delay_uses_exponential_backoff(self, mock_uniform):
+        self.assertEqual(_retry_delay_seconds(1), 1.0)
+        self.assertEqual(_retry_delay_seconds(2), 2.0)
+        self.assertEqual(_retry_delay_seconds(3), 4.0)
+
+    @mock.patch("beacon_skill.outbox.random.uniform", return_value=0.25)
+    def test_retry_delay_adds_jitter(self, mock_uniform):
+        self.assertEqual(_retry_delay_seconds(1), 1.25)
+
+    @mock.patch("beacon_skill.outbox.random.uniform", return_value=0)
+    @mock.patch("beacon_skill.outbox.time.time", return_value=1000.0)
+    def test_mark_retry_sets_next_attempt_time(self, mock_time, mock_uniform):
+        mgr = self._mgr()
+        aid = mgr.queue("reply", "bcn_alice", {"kind": "hello"})
+        mgr.mark_retry(aid)
+        item = mgr.get(aid)
+        self.assertEqual(item["next_attempt_at"], 1001.0)
+
+    def test_pending_excludes_items_until_next_attempt(self):
+        mgr = self._mgr()
+        aid = mgr.queue("reply", "bcn_alice", {"kind": "hello"})
+        item = mgr.get(aid)
+        item["next_attempt_at"] = time.time() + 60
+        pending = mgr._read_pending()
+        pending[aid] = item
+        mgr._write_pending(pending)
+
+        self.assertEqual(mgr.pending(), [])
+
     def test_max_retries_auto_fails(self):
         mgr = self._mgr()
         aid = mgr.queue("reply", "bcn_alice", {"kind": "hello"})
@@ -72,7 +103,11 @@ class TestOutbox(unittest.TestCase):
         aid = mgr.queue("reply", "bcn_alice", {"kind": "hello"})
         for _ in range(MAX_RETRY_ATTEMPTS - 1):
             mgr.mark_retry(aid)
-        # After 2 retries: attempts=2, still < MAX_RETRY_ATTEMPTS=3, still pending
+        # After 2 retries: attempts=2, still < MAX_RETRY_ATTEMPTS=3.
+        # Simulate the backoff window having elapsed so the item is ready.
+        pending = mgr._read_pending()
+        pending[aid]["next_attempt_at"] = time.time() - 1
+        mgr._write_pending(pending)
         items = mgr.pending()
         self.assertEqual(len(items), 1)
         mgr.mark_retry(aid)  # Now attempts=3 >= MAX_RETRY_ATTEMPTS → auto-fail
