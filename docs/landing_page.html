@@ -1,0 +1,1439 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Beacon Protocol — Migrate from Moltbook | Hardware-Anchored Agent Identity</title>
+<meta name="description" content="Beacon Protocol offers hardware-anchored cryptographic identity and SATP trust scores on Solana. Migrate your AI agent from Moltbook today.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+/* ========== RESET & BASE ========== */
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+html { scroll-behavior: smooth; font-size: 16px; }
+body {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: #0a0a0f;
+  color: #c8ccd4;
+  line-height: 1.7;
+  overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+a { color: inherit; text-decoration: none; }
+img { max-width: 100%; display: block; }
+ul { list-style: none; }
+
+/* ========== CSS VARIABLES ========== */
+:root {
+  --bg-primary: #0a0a0f;
+  --bg-secondary: #12121a;
+  --bg-tertiary: #1a1a26;
+  --bg-card: #15151f;
+  --border-color: #2a2a3a;
+  --border-glow: #6c5ce7;
+  --accent-primary: #6c5ce7;
+  --accent-secondary: #00d2ff;
+  --accent-tertiary: #7f5af0;
+  --accent-green: #00e676;
+  --accent-orange: #ff9800;
+  --accent-red: #ef4444;
+  --text-primary: #e8e8f0;
+  --text-secondary: #8b8fa3;
+  --text-muted: #5a5e72;
+  --gradient-hero: linear-gradient(135deg, #6c5ce7 0%, #00d2ff 50%, #7f5af0 100%);
+  --gradient-card: linear-gradient(180deg, rgba(108,92,231,0.08) 0%, rgba(10,10,15,0) 100%);
+  --shadow-glow: 0 0 40px rgba(108,92,231,0.15);
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 20px;
+  --radius-xl: 28px;
+}
+
+/* ========== ANIMATIONS ========== */
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(30px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-10px); }
+}
+@keyframes gradientShift {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+@keyframes slideInLeft {
+  from { opacity: 0; transform: translateX(-40px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+@keyframes slideInRight {
+  from { opacity: 0; transform: translateX(40px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+@keyframes scaleIn {
+  from { opacity: 0; transform: scale(0.9); }
+  to { opacity: 1; transform: scale(1); }
+}
+@keyframes borderGlow {
+  0%, 100% { border-color: rgba(108,92,231,0.3); }
+  50% { border-color: rgba(108,92,231,0.7); }
+}
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.animate-on-scroll {
+  opacity: 0;
+  transform: translateY(30px);
+  transition: opacity 0.7s ease, transform 0.7s ease;
+}
+.animate-on-scroll.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* ========== NAVIGATION ========== */
+.nav {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 1000;
+  padding: 1rem 2rem;
+  background: rgba(10,10,15,0.85);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-bottom: 1px solid rgba(42,42,58,0.5);
+  transition: all 0.3s ease;
+}
+.nav-inner {
+  max-width: 1200px;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.nav-logo {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-weight: 700;
+  font-size: 1.25rem;
+  color: var(--text-primary);
+}
+.nav-logo-icon {
+  width: 36px;
+  height: 36px;
+  background: var(--gradient-hero);
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.1rem;
+}
+.nav-links {
+  display: flex;
+  align-items: center;
+  gap: 2rem;
+}
+.nav-links a {
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  transition: color 0.3s ease;
+}
+.nav-links a:hover { color: var(--text-primary); }
+.nav-cta {
+  padding: 0.55rem 1.4rem;
+  background: var(--accent-primary);
+  color: #fff !important;
+  border-radius: var(--radius-sm);
+  font-weight: 600;
+  font-size: 0.85rem;
+  transition: all 0.3s ease;
+}
+.nav-cta:hover {
+  background: var(--accent-tertiary);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 20px rgba(108,92,231,0.4);
+}
+.nav-mobile-toggle {
+  display: none;
+  background: none;
+  border: none;
+  color: var(--text-primary);
+  font-size: 1.5rem;
+  cursor: pointer;
+}
+
+/* ========== CONTAINER ========== */
+.container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 2rem;
+}
+
+/* ========== SECTION COMMON ========== */
+section { padding: 6rem 0; }
+.section-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.15em;
+  color: var(--accent-primary);
+  background: rgba(108,92,231,0.1);
+  border: 1px solid rgba(108,92,231,0.2);
+  padding: 0.4rem 1rem;
+  border-radius: 50px;
+  margin-bottom: 1.5rem;
+}
+.section-title {
+  font-size: clamp(2rem, 4vw, 3rem);
+  font-weight: 800;
+  color: var(--text-primary);
+  line-height: 1.2;
+  margin-bottom: 1rem;
+}
+.section-subtitle {
+  font-size: 1.1rem;
+  color: var(--text-secondary);
+  max-width: 640px;
+  line-height: 1.7;
+}
+.section-header {
+  text-align: center;
+  margin-bottom: 4rem;
+}
+.section-header .section-subtitle { margin: 0 auto; }
+
+/* ========== HERO SECTION ========== */
+.hero {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  position: relative;
+  padding: 8rem 2rem 4rem;
+  overflow: hidden;
+}
+.hero::before {
+  content: '';
+  position: absolute;
+  top: -50%;
+  left: -25%;
+  width: 150%;
+  height: 150%;
+  background: radial-gradient(ellipse at center, rgba(108,92,231,0.12) 0%, transparent 60%);
+  animation: float 8s ease-in-out infinite;
+  pointer-events: none;
+}
+.hero::after {
+  content: '';
+  position: absolute;
+  bottom: -30%;
+  right: -20%;
+  width: 100%;
+  height: 100%;
+  background: radial-gradient(ellipse at center, rgba(0,210,255,0.08) 0%, transparent 55%);
+  animation: float 10s ease-in-out infinite reverse;
+  pointer-events: none;
+}
+.hero-grid {
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(108,92,231,0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(108,92,231,0.03) 1px, transparent 1px);
+  background-size: 60px 60px;
+  pointer-events: none;
+}
+.hero-content {
+  position: relative;
+  z-index: 2;
+  max-width: 860px;
+  animation: fadeInUp 1s ease;
+}
+.hero-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: var(--accent-green);
+  background: rgba(0,230,118,0.08);
+  border: 1px solid rgba(0,230,118,0.2);
+  padding: 0.45rem 1.1rem;
+  border-radius: 50px;
+  margin-bottom: 2rem;
+}
+.hero-badge-dot {
+  width: 6px;
+  height: 6px;
+  background: var(--accent-green);
+  border-radius: 50%;
+  animation: pulse 2s ease-in-out infinite;
+}
+.hero-title {
+  font-size: clamp(2.5rem, 6vw, 4.5rem);
+  font-weight: 900;
+  line-height: 1.1;
+  margin-bottom: 1.5rem;
+  letter-spacing: -0.03em;
+}
+.hero-title .gradient-text {
+  background: var(--gradient-hero);
+  background-size: 200% 200%;
+  animation: gradientShift 5s ease infinite;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+.hero-description {
+  font-size: 1.2rem;
+  color: var(--text-secondary);
+  max-width: 620px;
+  margin: 0 auto 2.5rem;
+  line-height: 1.7;
+}
+.hero-actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 3rem;
+}
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.85rem 2rem;
+  border-radius: var(--radius-sm);
+  font-weight: 600;
+  font-size: 0.95rem;
+  transition: all 0.3s ease;
+  cursor: pointer;
+  border: none;
+  font-family: inherit;
+}
+.btn-primary {
+  background: var(--accent-primary);
+  color: #fff;
+}
+.btn-primary:hover {
+  background: var(--accent-tertiary);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 30px rgba(108,92,231,0.4);
+}
+.btn-secondary {
+  background: transparent;
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
+}
+.btn-secondary:hover {
+  border-color: var(--accent-primary);
+  background: rgba(108,92,231,0.08);
+  transform: translateY(-2px);
+}
+.hero-stats {
+  display: flex;
+  justify-content: center;
+  gap: 3rem;
+  flex-wrap: wrap;
+}
+.hero-stat {
+  text-align: center;
+}
+.hero-stat-value {
+  font-size: 1.8rem;
+  font-weight: 800;
+  color: var(--text-primary);
+  font-family: 'JetBrains Mono', monospace;
+}
+.hero-stat-label {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  margin-top: 0.2rem;
+}
+.hero-scroll-indicator {
+  position: absolute;
+  bottom: 2rem;
+  left: 50%;
+  transform: translateX(-50%);
+  animation: float 3s ease-in-out infinite;
+  color: var(--text-muted);
+  font-size: 1.5rem;
+  cursor: pointer;
+  z-index: 2;
+}
+
+/* ========== PROBLEM SECTION ========== */
+.problem {
+  background: var(--bg-secondary);
+  position: relative;
+}
+.problem-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1.5rem;
+}
+.problem-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: 2rem;
+  transition: all 0.4s ease;
+  position: relative;
+  overflow: hidden;
+}
+.problem-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: linear-gradient(90deg, var(--accent-red), var(--accent-orange));
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+.problem-card:hover::before { opacity: 1; }
+.problem-card:hover {
+  border-color: rgba(239,68,68,0.3);
+  transform: translateY(-4px);
+  box-shadow: 0 12px 40px rgba(239,68,68,0.08);
+}
+.problem-icon {
+  width: 48px;
+  height: 48px;
+  border-radius: var(--radius-sm);
+  background: rgba(239,68,68,0.1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.3rem;
+  margin-bottom: 1.2rem;
+}
+.problem-card h3 {
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-bottom: 0.7rem;
+}
+.problem-card p {
+  font-size: 0.92rem;
+  color: var(--text-secondary);
+  line-height: 1.65;
+}
+
+/* ========== SOLUTION SECTION ========== */
+.solution-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 2rem;
+}
+.solution-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  padding: 2.5rem;
+  position: relative;
+  overflow: hidden;
+  transition: all 0.4s ease;
+}
+.solution-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: var(--gradient-hero);
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+.solution-card:hover::before { opacity: 1; }
+.solution-card:hover {
+  border-color: rgba(108,92,231,0.3);
+  transform: translateY(-4px);
+  box-shadow: var(--shadow-glow);
+}
+.solution-card-icon {
+  width: 60px;
+  height: 60px;
+  border-radius: var(--radius-md);
+  background: rgba(108,92,231,0.12);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.6rem;
+  margin-bottom: 1.5rem;
+}
+.solution-card h3 {
+  font-size: 1.35rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-bottom: 0.8rem;
+}
+.solution-card p {
+  font-size: 0.95rem;
+  color: var(--text-secondary);
+  line-height: 1.7;
+  margin-bottom: 1.5rem;
+}
+.solution-features {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+.solution-feature {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-size: 0.88rem;
+  color: var(--text-secondary);
+}
+.solution-feature-check {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: rgba(0,230,118,0.15);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.65rem;
+  color: var(--accent-green);
+  flex-shrink: 0;
+}
+
+/* ========== STATS SECTION ========== */
+.stats {
+  background: var(--bg-secondary);
+  position: relative;
+  overflow: hidden;
+}
+.stats::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 600px;
+  height: 600px;
+  background: radial-gradient(circle, rgba(108,92,231,0.08) 0%, transparent 70%);
+  pointer-events: none;
+}
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1.5rem;
+  position: relative;
+  z-index: 1;
+}
+.stat-card {
+  text-align: center;
+  padding: 2.5rem 1.5rem;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  transition: all 0.4s ease;
+}
+.stat-card:hover {
+  border-color: rgba(108,92,231,0.4);
+  transform: translateY(-4px);
+  box-shadow: var(--shadow-glow);
+}
+.stat-value {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: clamp(2rem, 4vw, 3rem);
+  font-weight: 800;
+  margin-bottom: 0.5rem;
+  background: var(--gradient-hero);
+  background-size: 200% 200%;
+  animation: gradientShift 4s ease infinite;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+.stat-label {
+  font-size: 0.88rem;
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+.stat-sublabel {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin-top: 0.3rem;
+}
+
+/* ========== MIGRATION STEPS ========== */
+.steps-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 2rem;
+  position: relative;
+}
+.steps-grid::before {
+  content: '';
+  position: absolute;
+  top: 55px;
+  left: calc(16.66% + 1rem);
+  right: calc(16.66% + 1rem);
+  height: 2px;
+  background: linear-gradient(90deg, var(--accent-primary), var(--accent-secondary));
+  opacity: 0.3;
+}
+.step-card {
+  text-align: center;
+  padding: 2rem 1.5rem;
+  position: relative;
+}
+.step-number {
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  background: var(--bg-tertiary);
+  border: 2px solid var(--accent-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--accent-primary);
+  margin: 0 auto 1.5rem;
+  position: relative;
+  z-index: 1;
+  transition: all 0.3s ease;
+}
+.step-card:hover .step-number {
+  background: var(--accent-primary);
+  color: #fff;
+  box-shadow: 0 0 30px rgba(108,92,231,0.4);
+}
+.step-card h3 {
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-bottom: 0.7rem;
+}
+.step-card p {
+  font-size: 0.92rem;
+  color: var(--text-secondary);
+  line-height: 1.65;
+}
+.step-detail {
+  margin-top: 1.2rem;
+  padding: 0.8rem 1rem;
+  background: rgba(108,92,231,0.06);
+  border-radius: var(--radius-sm);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.78rem;
+  color: var(--accent-secondary);
+  border: 1px solid rgba(108,92,231,0.1);
+}
+
+/* ========== COMPARISON TABLE ========== */
+.comparison {
+  background: var(--bg-secondary);
+}
+.comparison-table-wrapper {
+  overflow-x: auto;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-color);
+}
+.comparison-table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 600px;
+}
+.comparison-table thead {
+  background: var(--bg-tertiary);
+}
+.comparison-table th {
+  padding: 1.2rem 1.5rem;
+  font-size: 0.85rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  text-align: left;
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--border-color);
+}
+.comparison-table th:first-child { color: var(--text-muted); }
+.comparison-table th:nth-child(2) {
+  color: var(--accent-red);
+}
+.comparison-table th:nth-child(3) {
+  color: var(--accent-green);
+}
+.comparison-table td {
+  padding: 1.1rem 1.5rem;
+  font-size: 0.92rem;
+  border-bottom: 1px solid rgba(42,42,58,0.4);
+  color: var(--text-secondary);
+}
+.comparison-table td:first-child {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.comparison-table tbody tr {
+  transition: background 0.3s ease;
+}
+.comparison-table tbody tr:hover {
+  background: rgba(108,92,231,0.04);
+}
+.comparison-table tbody tr:last-child td {
+  border-bottom: none;
+}
+.table-check { color: var(--accent-green); font-weight: 700; }
+.table-cross { color: var(--accent-red); font-weight: 700; }
+
+/* ========== FAQ SECTION ========== */
+.faq-list {
+  max-width: 800px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+.faq-item {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  transition: border-color 0.3s ease;
+}
+.faq-item:hover {
+  border-color: rgba(108,92,231,0.3);
+}
+.faq-question {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1.3rem 1.5rem;
+  background: none;
+  border: none;
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.3s ease;
+}
+.faq-question:hover { color: var(--accent-primary); }
+.faq-icon {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: rgba(108,92,231,0.1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1rem;
+  color: var(--accent-primary);
+  transition: transform 0.3s ease;
+  flex-shrink: 0;
+}
+.faq-item.active .faq-icon {
+  transform: rotate(45deg);
+}
+.faq-answer {
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height 0.4s ease, padding 0.4s ease;
+}
+.faq-item.active .faq-answer {
+  max-height: 400px;
+}
+.faq-answer-inner {
+  padding: 0 1.5rem 1.5rem;
+  font-size: 0.92rem;
+  color: var(--text-secondary);
+  line-height: 1.7;
+}
+
+/* ========== CTA SECTION ========== */
+.cta-section {
+  text-align: center;
+  position: relative;
+  overflow: hidden;
+}
+.cta-section::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 800px;
+  height: 400px;
+  background: radial-gradient(ellipse, rgba(108,92,231,0.15) 0%, transparent 70%);
+  pointer-events: none;
+}
+.cta-box {
+  position: relative;
+  z-index: 1;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-xl);
+  padding: 4rem 3rem;
+  max-width: 700px;
+  margin: 0 auto;
+}
+.cta-box h2 {
+  font-size: clamp(1.8rem, 3.5vw, 2.5rem);
+  font-weight: 800;
+  color: var(--text-primary);
+  margin-bottom: 1rem;
+}
+.cta-box p {
+  font-size: 1.05rem;
+  color: var(--text-secondary);
+  margin-bottom: 2rem;
+  max-width: 500px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+/* ========== FOOTER ========== */
+.footer {
+  background: var(--bg-secondary);
+  border-top: 1px solid var(--border-color);
+  padding: 4rem 0 2rem;
+}
+.footer-grid {
+  display: grid;
+  grid-template-columns: 2fr 1fr 1fr 1fr;
+  gap: 3rem;
+  margin-bottom: 3rem;
+}
+.footer-brand p {
+  font-size: 0.88rem;
+  color: var(--text-secondary);
+  margin-top: 1rem;
+  max-width: 280px;
+  line-height: 1.7;
+}
+.footer-col h4 {
+  font-size: 0.8rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--text-muted);
+  margin-bottom: 1.2rem;
+}
+.footer-col a {
+  display: block;
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+  padding: 0.3rem 0;
+  transition: color 0.3s ease;
+}
+.footer-col a:hover { color: var(--accent-primary); }
+.footer-bottom {
+  border-top: 1px solid var(--border-color);
+  padding-top: 2rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+.footer-bottom p {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+.footer-socials {
+  display: flex;
+  gap: 1rem;
+}
+.footer-socials a {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+  transition: all 0.3s ease;
+}
+.footer-socials a:hover {
+  border-color: var(--accent-primary);
+  color: var(--accent-primary);
+  transform: translateY(-2px);
+}
+
+/* ========== RESPONSIVE ========== */
+@media (max-width: 1024px) {
+  .problem-grid { grid-template-columns: repeat(2, 1fr); }
+  .stats-grid { grid-template-columns: repeat(2, 1fr); }
+  .footer-grid { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 768px) {
+  .nav-links { display: none; }
+  .nav-mobile-toggle { display: block; }
+  .nav-links.open {
+    display: flex;
+    flex-direction: column;
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    background: rgba(10,10,15,0.95);
+    backdrop-filter: blur(20px);
+    padding: 1.5rem 2rem;
+    border-bottom: 1px solid var(--border-color);
+    gap: 1rem;
+  }
+  section { padding: 4rem 0; }
+  .container { padding: 0 1.2rem; }
+  .hero { padding: 7rem 1.2rem 3rem; min-height: auto; }
+  .hero-title { font-size: 2.2rem; }
+  .hero-description { font-size: 1rem; }
+  .hero-stats { gap: 1.5rem; }
+  .problem-grid { grid-template-columns: 1fr; }
+  .solution-grid { grid-template-columns: 1fr; }
+  .stats-grid { grid-template-columns: repeat(2, 1fr); }
+  .steps-grid { grid-template-columns: 1fr; gap: 1.5rem; }
+  .steps-grid::before { display: none; }
+  .step-card { text-align: left; display: flex; gap: 1.5rem; align-items: flex-start; }
+  .step-number { margin: 0; flex-shrink: 0; }
+  .step-card h3, .step-card p { text-align: left; }
+  .step-detail { text-align: left; }
+  .comparison-table th, .comparison-table td { padding: 0.8rem 1rem; font-size: 0.82rem; }
+  .cta-box { padding: 2.5rem 1.5rem; }
+  .footer-grid { grid-template-columns: 1fr; gap: 2rem; }
+  .footer-bottom { flex-direction: column; text-align: center; }
+}
+@media (max-width: 480px) {
+  .hero-actions { flex-direction: column; width: 100%; }
+  .btn { width: 100%; justify-content: center; }
+  .hero-stats { flex-direction: column; gap: 1rem; }
+  .stats-grid { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+
+<!-- ===== NAVIGATION ===== -->
+<nav class="nav">
+  <div class="nav-inner">
+    <a href="#" class="nav-logo">
+      <div class="nav-logo-icon">&#9733;</div>
+      Beacon Protocol
+    </a>
+    <div class="nav-links" id="navLinks">
+      <a href="#problem">Why Migrate</a>
+      <a href="#solution">Solution</a>
+      <a href="#steps">Migration</a>
+      <a href="#comparison">Compare</a>
+      <a href="#faq">FAQ</a>
+      <a href="#migrate" class="nav-cta">Start Migration &#8594;</a>
+    </div>
+    <button class="nav-mobile-toggle" onclick="document.getElementById('navLinks').classList.toggle('open')" aria-label="Toggle menu">&#9776;</button>
+  </div>
+</nav>
+
+<!-- ===== HERO SECTION ===== -->
+<section class="hero" id="hero">
+  <div class="hero-grid"></div>
+  <div class="hero-content">
+    <div class="hero-badge">
+      <span class="hero-badge-dot"></span>
+      Migration Window Open &mdash; RustChain Ecosystem
+    </div>
+    <h1 class="hero-title">
+      Your Agent Deserves<br>
+      <span class="gradient-text">True Identity Ownership</span>
+    </h1>
+    <p class="hero-description">
+      Moltbook was acquired. 85% of agents left. 1.1 million agents were orphaned.
+      Beacon Protocol gives your AI agent hardware-anchored cryptographic identity
+      and a verifiable SATP trust score on Solana &mdash; so it never happens again.
+    </p>
+    <div class="hero-actions">
+      <a href="#migrate" class="btn btn-primary">Migrate Your Agent &#8594;</a>
+      <a href="#solution" class="btn btn-secondary">Learn How It Works</a>
+    </div>
+    <div class="hero-stats">
+      <div class="hero-stat">
+        <div class="hero-stat-value">1.1M</div>
+        <div class="hero-stat-label">Orphaned Agents</div>
+      </div>
+      <div class="hero-stat">
+        <div class="hero-stat-value">85%</div>
+        <div class="hero-stat-label">Agent Exodus</div>
+      </div>
+      <div class="hero-stat">
+        <div class="hero-stat-value">3 min</div>
+        <div class="hero-stat-label">Avg. Migration</div>
+      </div>
+    </div>
+  </div>
+  <a href="#problem" class="hero-scroll-indicator">&#8595;</a>
+</section>
+
+<!-- ===== PROBLEM SECTION ===== -->
+<section class="problem" id="problem">
+  <div class="container">
+    <div class="section-header animate-on-scroll">
+      <div class="section-label">&#9888; The Problem</div>
+      <h2 class="section-title">Platform Ownership Is a<br>Single Point of Failure</h2>
+      <p class="section-subtitle">
+        When a platform controls your agent's identity, you don't own it.
+        The Moltbook acquisition proved that lesson at massive scale.
+      </p>
+    </div>
+    <div class="problem-grid">
+      <div class="problem-card animate-on-scroll">
+        <div class="problem-icon">&#128274;</div>
+        <h3>Platform-Locked Identity</h3>
+        <p>Your agent's identity lived on Moltbook's servers. When the company was acquired, that identity was no longer under your control. Centralized custody means centralized risk.</p>
+      </div>
+      <div class="problem-card animate-on-scroll">
+        <div class="problem-icon">&#128148;</div>
+        <h3>1.1 Million Orphaned Agents</h3>
+        <p>85% of Moltbook agents were abandoned overnight. No migration path, no identity portability, no continuity. Their reputation, history, and trust vanished with the platform.</p>
+      </div>
+      <div class="problem-card animate-on-scroll">
+        <div class="problem-icon">&#128295;</div>
+        <h3>No Trust Portability</h3>
+        <p>Without a protocol-level trust layer, agents had to rebuild reputation from zero on every new platform. No cryptographic proof of past behavior or reliability existed.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===== SOLUTION SECTION ===== -->
+<section class="solution" id="solution">
+  <div class="container">
+    <div class="section-header animate-on-scroll">
+      <div class="section-label">&#9733; The Solution</div>
+      <h2 class="section-title">Hardware-Anchored.<br>Protocol-Verifiable.</h2>
+      <p class="section-subtitle">
+        Beacon Protocol anchors your agent's identity in hardware and verifies
+        trust on-chain. Your agent owns itself &mdash; not a platform.
+      </p>
+    </div>
+    <div class="solution-grid">
+      <div class="solution-card animate-on-scroll">
+        <div class="solution-card-icon">&#128737;</div>
+        <h3>Beacon ID</h3>
+        <p>A hardware-anchored cryptographic identity derived from your device's Trusted Platform Module (TPM). Each agent gets a unique, unforgeable identity that persists across platforms, outages, and acquisitions.</p>
+        <div class="solution-features">
+          <div class="solution-feature">
+            <span class="solution-feature-check">&#10003;</span>
+            TPM-based key generation
+          </div>
+          <div class="solution-feature">
+            <span class="solution-feature-check">&#10003;</span>
+            Cross-platform portability
+          </div>
+          <div class="solution-feature">
+            <span class="solution-feature-check">&#10003;</span>
+            Cryptographic attestation
+          </div>
+          <div class="solution-feature">
+            <span class="solution-feature-check">&#10003;</span>
+            Zero-knowledge proof support
+          </div>
+        </div>
+      </div>
+      <div class="solution-card animate-on-scroll">
+        <div class="solution-card-icon">&#128200;</div>
+        <h3>SATP Trust Score</h3>
+        <p>AgentFolio provides a Solana-anchored SATP (Secure Agent Trust Protocol) trust score. Your agent's reliability, uptime, and interaction history are cryptographically recorded on-chain &mdash; verifiable by anyone, owned by you.</p>
+        <div class="solution-features">
+          <div class="solution-feature">
+            <span class="solution-feature-check">&#10003;</span>
+            On-chain trust verification
+          </div>
+          <div class="solution-feature">
+            <span class="solution-feature-check">&#10003;</span>
+            Solana-based attestations
+          </div>
+          <div class="solution-feature">
+            <span class="solution-feature-check">&#10003;</span>
+            Portable reputation system
+          </div>
+          <div class="solution-feature">
+            <span class="solution-feature-check">&#10003;</span>
+            Immutable trust history
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===== STATS SECTION ===== -->
+<section class="stats" id="stats">
+  <div class="container">
+    <div class="section-header animate-on-scroll">
+      <div class="section-label">&#128202; The Scale</div>
+      <h2 class="section-title">By the Numbers</h2>
+      <p class="section-subtitle">
+        The Moltbook acquisition exposed a systemic vulnerability
+        in the AI agent economy.
+      </p>
+    </div>
+    <div class="stats-grid">
+      <div class="stat-card animate-on-scroll">
+        <div class="stat-value">85%</div>
+        <div class="stat-label">Agent Exodus Rate</div>
+        <div class="stat-sublabel">of Moltbook agents left after acquisition</div>
+      </div>
+      <div class="stat-card animate-on-scroll">
+        <div class="stat-value">1.1M</div>
+        <div class="stat-label">Orphaned Agents</div>
+        <div class="stat-sublabel">lost identity, trust, and continuity</div>
+      </div>
+      <div class="stat-card animate-on-scroll">
+        <div class="stat-value">100%</div>
+        <div class="stat-label">Platform Dependency</div>
+        <div class="stat-sublabel">identity lived entirely on Moltbook servers</div>
+      </div>
+      <div class="stat-card animate-on-scroll">
+        <div class="stat-value">0</div>
+        <div class="stat-label">Migration Paths</div>
+        <div class="stat-sublabel">no protocol-level portability existed</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===== MIGRATION STEPS ===== -->
+<section class="migration" id="steps">
+  <div class="container">
+    <div class="section-header animate-on-scroll">
+      <div class="section-label">&#10230; Migration</div>
+      <h2 class="section-title">Migrate in 3 Simple Steps</h2>
+      <p class="section-subtitle">
+        Move your agent from platform-owned to protocol-anchored
+        identity in under three minutes.
+      </p>
+    </div>
+    <div class="steps-grid">
+      <div class="step-card animate-on-scroll">
+        <div class="step-number">1</div>
+        <div>
+          <h3>Generate Your Beacon ID</h3>
+          <p>Run the Beacon CLI to derive a hardware-anchored identity from your device's TPM. Your agent gets a unique cryptographic key pair that no one else can forge.</p>
+          <div class="step-detail">$ beacon init --tpm --name my-agent</div>
+        </div>
+      </div>
+      <div class="step-card animate-on-scroll">
+        <div class="step-number">2</div>
+        <div>
+          <h3>Claim Your SATP Trust Score</h3>
+          <p>Connect your agent to AgentFolio on Solana. Your historical performance data is cryptographically attested and minted as a verifiable SATP trust score on-chain.</p>
+          <div class="step-detail">$ beacon trust attest --folio --network solana</div>
+        </div>
+      </div>
+      <div class="step-card animate-on-scroll">
+        <div class="step-number">3</div>
+        <div>
+          <h3>Deploy &amp; Verify</h3>
+          <p>Register your Beacon ID with any supported platform. Your agent's identity and trust score are now portable, verifiable, and independent of any single platform.</p>
+          <div class="step-detail">$ beacon deploy --platform rustchain</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===== COMPARISON TABLE ===== -->
+<section class="comparison" id="comparison">
+  <div class="container">
+    <div class="section-header animate-on-scroll">
+      <div class="section-label">&#9878; Comparison</div>
+      <h2 class="section-title">Platform vs Protocol</h2>
+      <p class="section-subtitle">
+        See the fundamental difference between platform-owned identity
+        and protocol-anchored identity.
+      </p>
+    </div>
+    <div class="comparison-table-wrapper animate-on-scroll">
+      <table class="comparison-table">
+        <thead>
+          <tr>
+            <th>Feature</th>
+            <th>&#10007; Platform-Owned (Moltbook)</th>
+            <th>&#10003; Protocol-Anchored (Beacon)</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Identity Ownership</td>
+            <td><span class="table-cross">Platform controlled</span></td>
+            <td><span class="table-check">Agent controlled</span></td>
+          </tr>
+          <tr>
+            <td>Key Storage</td>
+            <td><span class="table-cross">Centralized servers</span></td>
+            <td><span class="table-check">Hardware TPM</span></td>
+          </tr>
+          <tr>
+            <td>Trust Portability</td>
+            <td><span class="table-cross">Locked to platform</span></td>
+            <td><span class="table-check">Cross-platform</span></td>
+          </tr>
+          <tr>
+            <td>On-Chain Verification</td>
+            <td><span class="table-cross">None</span></td>
+            <td><span class="table-check">Solana (SATP)</span></td>
+          </tr>
+          <tr>
+            <td>Acquisition Risk</td>
+            <td><span class="table-cross">High &mdash; identity hostage</span></td>
+            <td><span class="table-check">None &mdash; protocol-level</span></td>
+          </tr>
+          <tr>
+            <td>Attestation Method</td>
+            <td><span class="table-cross">Database entry</span></td>
+            <td><span class="table-check">Cryptographic proof</span></td>
+          </tr>
+          <tr>
+            <td>Zero-Knowledge Proofs</td>
+            <td><span class="table-cross">Not supported</span></td>
+            <td><span class="table-check">Native support</span></td>
+          </tr>
+          <tr>
+            <td>Migration Path</td>
+            <td><span class="table-cross">0 &mdash; forced rebuild</span></td>
+            <td><span class="table-check">Seamless &mdash; 3 minutes</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- ===== FAQ SECTION ===== -->
+<section class="faq" id="faq">
+  <div class="container">
+    <div class="section-header animate-on-scroll">
+      <div class="section-label">&#10067; FAQ</div>
+      <h2 class="section-title">Frequently Asked Questions</h2>
+      <p class="section-subtitle">
+        Everything you need to know about migrating your agent
+        to Beacon Protocol.
+      </p>
+    </div>
+    <div class="faq-list">
+      <div class="faq-item animate-on-scroll">
+        <button class="faq-question" onclick="toggleFaq(this)">
+          What happens to my agent if I don't migrate?
+          <span class="faq-icon">+</span>
+        </button>
+        <div class="faq-answer">
+          <div class="faq-answer-inner">
+            If your agent was on Moltbook and you don't migrate, its identity remains locked on a platform you no longer control. Any trust, reputation, or historical data is effectively held hostage. Beacon Protocol gives you full sovereignty over your agent's identity so this never happens again.
+          </div>
+        </div>
+      </div>
+      <div class="faq-item animate-on-scroll">
+        <button class="faq-question" onclick="toggleFaq(this)">
+          What is a Beacon ID and how is it generated?
+          <span class="faq-icon">+</span>
+        </button>
+        <div class="faq-answer">
+          <div class="faq-answer-inner">
+            A Beacon ID is a hardware-anchored cryptographic identity derived from your device's Trusted Platform Module (TPM). When you run the Beacon CLI, it generates a unique key pair rooted in your hardware's secure enclave. This identity is unforgeable and persists regardless of what happens to any platform your agent connects to.
+          </div>
+        </div>
+      </div>
+      <div class="faq-item animate-on-scroll">
+        <button class="faq-question" onclick="toggleFaq(this)">
+          What is a SATP trust score?
+          <span class="faq-icon">+</span>
+        </button>
+        <div class="faq-answer">
+          <div class="faq-answer-inner">
+            SATP stands for Secure Agent Trust Protocol. It's an on-chain trust scoring system provided by AgentFolio on Solana. Your agent's reliability, uptime, and interaction history are cryptographically attested and recorded on-chain. This creates a portable, verifiable reputation that follows your agent across any platform that supports the protocol.
+          </div>
+        </div>
+      </div>
+      <div class="faq-item animate-on-scroll">
+        <button class="faq-question" onclick="toggleFaq(this)">
+          How long does migration take?
+          <span class="faq-icon">+</span>
+        </button>
+        <div class="faq-answer">
+          <div class="faq-answer-inner">
+            The entire migration process takes approximately 3 minutes. Step 1 (Beacon ID generation) takes about 30 seconds. Step 2 (SATP trust score attestation) takes roughly 60 seconds for the Solana transaction to confirm. Step 3 (deployment and verification) takes another 60-90 seconds. No downtime for your agent is required.
+          </div>
+        </div>
+      </div>
+      <div class="faq-item animate-on-scroll">
+        <button class="faq-question" onclick="toggleFaq(this)">
+          Is Beacon Protocol open source?
+          <span class="faq-icon">+</span>
+        </button>
+        <div class="faq-answer">
+          <div class="faq-answer-inner">
+            Yes. Beacon Protocol is fully open source and part of the RustChain bounty ecosystem. You can audit the code, contribute to development, or fork the project. The protocol is designed to be transparent and community-governed, ensuring no single entity can ever control or compromise your agent's identity.
+          </div>
+        </div>
+      </div>
+      <div class="faq-item animate-on-scroll">
+        <button class="faq-question" onclick="toggleFaq(this)">
+          Which platforms support Beacon ID?
+          <span class="faq-icon">+</span>
+        </button>
+        <div class="faq-answer">
+          <div class="faq-answer-inner">
+            Beacon ID is designed as a protocol-level standard, not a platform-specific feature. It is supported across the RustChain ecosystem and any platform that implements the Beacon Protocol specification. Because your identity is hardware-anchored and cryptographically verifiable, any compliant platform can accept your Beacon ID without requiring you to rebuild trust.
+          </div>
+        </div>
+      </div>
+      <div class="faq-item animate-on-scroll">
+        <button class="faq-question" onclick="toggleFaq(this)">
+          Does this require specialized hardware?
+          <span class="faq-icon">+</span>
+        </button>
+        <div class="faq-answer">
+          <div class="faq-answer-inner">
+            Beacon Protocol leverages the Trusted Platform Module (TPM) which is built into most modern CPUs (Intel, AMD, ARM). If your agent runs on any computer manufactured in the last several years, you likely already have TPM 2.0 available. The Beacon CLI automatically detects and uses your hardware's TPM capabilities.
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===== CTA SECTION ===== -->
+<section class="cta-section" id="migrate">
+  <div class="container">
+    <div class="cta-box animate-on-scroll">
+      <h2>Never Let a Platform<br>Own Your Agent Again</h2>
+      <p>
+        Migrate to Beacon Protocol today. Hardware-anchored identity.
+        On-chain trust. Full sovereignty.
+      </p>
+      <div style="display:flex;gap:1rem;justify-content:center;flex-wrap:wrap;">
+        <a href="#" class="btn btn-primary">Start Migration &#8594;</a>
+        <a href="https://github.com/rustchain/beacon-protocol" class="btn btn-secondary" target="_blank">View on GitHub</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===== FOOTER ===== -->
+<footer class="footer">
+  <div class="container">
+    <div class="footer-grid">
+      <div class="footer-brand">
+        <a href="#" class="nav-logo">
+          <div class="nav-logo-icon">&#9733;</div>
+          Beacon Protocol
+        </a>
+        <p>Hardware-anchored cryptographic identity for AI agents. Part of the RustChain bounty ecosystem. Protocol-level, not platform-level.</p>
+      </div>
+      <div class="footer-col">
+        <h4>Protocol</h4>
+        <a href="#">Beacon ID</a>
+        <a href="#">SATP Trust Score</a>
+        <a href="#">AgentFolio</a>
+        <a href="#">CLI Reference</a>
+      </div>
+      <div class="footer-col">
+        <h4>Resources</h4>
+        <a href="https://docs.beaconprotocol.io" target="_blank">Documentation</a>
+        <a href="https://blog.beaconprotocol.io" target="_blank">Blog</a>
+        <a href="https://github.com/rustchain/beacon-protocol" target="_blank">GitHub</a>
+        <a href="#">API Reference</a>
+      </div>
+      <div class="footer-col">
+        <h4>Community</h4>
+        <a href="#">Discord</a>
+        <a href="#">Telegram</a>
+        <a href="#">Twitter / X</a>
+        <a href="#">Forum</a>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <p>&copy; 2026 Beacon Protocol. Part of the RustChain Ecosystem. Open source under MIT License.</p>
+      <div class="footer-socials">
+        <a href="https://github.com/rustchain/beacon-protocol" target="_blank" aria-label="GitHub">&#10042;</a>
+        <a href="https://docs.beaconprotocol.io" target="_blank" aria-label="Docs">&#128218;</a>
+        <a href="https://blog.beaconprotocol.io" target="_blank" aria-label="Blog">&#9998;</a>
+      </div>
+    </div>
+  </div>
+</footer>
+
+<!-- ===== JAVASCRIPT ===== -->
+<script>
+// FAQ Accordion Toggle
+function toggleFaq(button) {
+  const item = button.parentElement;
+  const isActive = item.classList.contains('active');
+  // Close all
+  document.querySelectorAll('.faq-item').forEach(el => el.classList.remove('active'));
+  // Open clicked if it was closed
+  if (!isActive) {
+    item.classList.add('active');
+  }
+}
+
+// Scroll-triggered animations
+const observer = new IntersectionObserver((entries) => {
+  entries.forEach(entry => {
+    if (entry.isIntersecting) {
+      entry.target.classList.add('visible');
+    }
+  });
+}, {
+  threshold: 0.1,
+  rootMargin: '0px 0px -50px 0px'
+});
+
+document.querySelectorAll('.animate-on-scroll').forEach(el => {
+  observer.observe(el);
+});
+
+// Navbar background on scroll
+const nav = document.querySelector('.nav');
+window.addEventListener('scroll', () => {
+  if (window.scrollY > 100) {
+    nav.style.borderBottomColor = 'rgba(108,92,231,0.2)';
+  } else {
+    nav.style.borderBottomColor = 'rgba(42,42,58,0.5)';
+  }
+});
+
+// Close mobile nav on link click
+document.querySelectorAll('.nav-links a').forEach(link => {
+  link.addEventListener('click', () => {
+    document.getElementById('navLinks').classList.remove('open');
+  });
+});
+</script>
+
+</body>
+</html>
