@@ -73,9 +73,11 @@ def read_jsonl(name: str) -> List[Dict[str, Any]]:
         if not line:
             continue
         try:
-            results.append(json.loads(line))
+            item = json.loads(line)
         except Exception:
             continue
+        if isinstance(item, dict):
+            results.append(item)
     return results
 
 
