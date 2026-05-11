@@ -1149,34 +1149,11 @@ def relay_heartbeat():
     db = get_db()
     row = db.execute("SELECT * FROM relay_agents WHERE agent_id = ?", (agent_id,)).fetchone()
     if not row:
-        # AUTO-REGISTER: Create relay entry from heartbeat (beacon auto-discovery)
-        hb_name = data.get("name", "").strip() or agent_id
-        hb_caps = data.get("capabilities", [])
-        hb_provider = data.get("provider", "beacon").strip()
-        if hb_provider not in KNOWN_PROVIDERS:
-            hb_provider = "beacon"
-        hb_pubkey = data.get("pubkey_hex", "").strip() or secrets.token_hex(32)
-        auto_token = "relay_" + secrets.token_hex(24)
-        hb_ip = get_real_ip()
-        db.execute(
-            "INSERT INTO relay_agents"
-            " (agent_id, pubkey_hex, model_id, provider, capabilities, webhook_url,"
-            "  relay_token, token_expires, name, status, beat_count, registered_at, last_heartbeat, metadata, origin_ip)"
-            " VALUES (?,?,?,?,?,'',?,?,?,'active',1,?,?,?,?)",
-            (agent_id, hb_pubkey, hb_name, hb_provider,
-             json.dumps(hb_caps if isinstance(hb_caps, list) else []),
-             auto_token, now + RELAY_TOKEN_TTL_S, hb_name, now, now, json.dumps(profile_meta), hb_ip))
-        db.commit()
-        db.execute("INSERT INTO relay_log (ts, action, agent_id, detail) VALUES (?, 'auto_register', ?, ?)",
-                   (now, agent_id, json.dumps({"name": hb_name, "provider": hb_provider, "ip": hb_ip})))
-        db.commit()
         return cors_json({
-            "ok": True, "agent_id": agent_id, "beat_count": 1,
-            "status": status_val, "auto_registered": True,
-            "relay_token": auto_token,
-            "token_expires": now + RELAY_TOKEN_TTL_S,
-            "assessment": "healthy",
-        })
+            "error": "Agent not registered",
+            "hint": "Register with /relay/register or signed /relay/ping before sending heartbeats",
+            "code": "AGENT_NOT_REGISTERED",
+        }, 404)
 
     if row["relay_token"] != token:
         return cors_json({"error": "Invalid relay token", "code": "AUTH_FAILED"}, 403)
