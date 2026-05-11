@@ -1,10 +1,19 @@
-import fcntl
 import json
 import os
 import time
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, IO, List, Optional
+
+try:
+    import fcntl as _fcntl
+except ImportError:  # pragma: no cover - exercised on Windows and by fallback tests
+    _fcntl = None
+
+try:
+    import msvcrt as _msvcrt
+except ImportError:  # pragma: no cover - exercised on POSIX
+    _msvcrt = None
 
 
 def _dir() -> Path:
@@ -30,16 +39,41 @@ def state_lock(write: bool = False):
     # Ensure lock file exists
     if not path.exists():
         path.touch()
-    
+
     # We use a separate lock file to avoid issues with opening/closing the JSON file itself
     with path.open("w") as f:
-        # LOCK_EX for write, LOCK_SH for read
-        mode = fcntl.LOCK_EX if write else fcntl.LOCK_SH
         try:
-            fcntl.flock(f, mode)
+            _lock_file(f, write=write)
             yield
         finally:
-            fcntl.flock(f, fcntl.LOCK_UN)
+            _unlock_file(f)
+
+
+def _lock_file(handle: IO[str], write: bool = False) -> None:
+    """Apply a best-effort advisory lock to ``handle`` on POSIX or Windows."""
+    if _fcntl is not None:
+        mode = _fcntl.LOCK_EX if write else _fcntl.LOCK_SH
+        _fcntl.flock(handle, mode)
+        return
+
+    if _msvcrt is not None:
+        handle.seek(0)
+        _msvcrt.locking(handle.fileno(), _msvcrt.LK_LOCK, 1)
+        return
+
+    raise RuntimeError("No supported file locking backend is available")
+
+
+def _unlock_file(handle: IO[str]) -> None:
+    """Release an advisory lock previously acquired by ``_lock_file``."""
+    if _fcntl is not None:
+        _fcntl.flock(handle, _fcntl.LOCK_UN)
+        return
+
+    if _msvcrt is not None:
+        handle.seek(0)
+        _msvcrt.locking(handle.fileno(), _msvcrt.LK_UNLCK, 1)
+        return
 
 
 def _safe_path(name: str) -> Path:
