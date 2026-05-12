@@ -1,10 +1,13 @@
-import fcntl
 import json
 import os
+import sys
 import time
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+if sys.platform != "win32":
+    import fcntl
 
 
 def _dir() -> Path:
@@ -27,19 +30,31 @@ def _inbox_path() -> Path:
 def state_lock(write: bool = False):
     """Context manager for advisory file locking on the state file."""
     path = _dir() / "state.json.lock"
-    # Ensure lock file exists
     if not path.exists():
         path.touch()
-    
-    # We use a separate lock file to avoid issues with opening/closing the JSON file itself
+
     with path.open("w") as f:
-        # LOCK_EX for write, LOCK_SH for read
-        mode = fcntl.LOCK_EX if write else fcntl.LOCK_SH
-        try:
-            fcntl.flock(f, mode)
-            yield
-        finally:
-            fcntl.flock(f, fcntl.LOCK_UN)
+        if sys.platform == "win32":
+            import msvcrt
+            # msvcrt.locking uses byte-range locking; lock the first byte as a mutex
+            try:
+                f.seek(0)
+                msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
+                yield
+            finally:
+                try:
+                    f.seek(0)
+                    msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
+                except OSError:
+                    pass
+        else:
+            # LOCK_EX for write, LOCK_SH for read
+            mode = fcntl.LOCK_EX if write else fcntl.LOCK_SH
+            try:
+                fcntl.flock(f, mode)
+                yield
+            finally:
+                fcntl.flock(f, fcntl.LOCK_UN)
 
 
 def _safe_path(name: str) -> Path:
