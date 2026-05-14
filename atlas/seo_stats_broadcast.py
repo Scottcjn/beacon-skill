@@ -22,6 +22,9 @@ from typing import Dict, List
 RELAY_HOST = os.environ.get("BEACON_RELAY", "https://rustchain.org")
 BASE_URL = f"{RELAY_HOST}/beacon"
 
+# SSL verification: default to True (secure). Set BEACON_SSL_VERIFY=false to disable.
+SSL_VERIFY = os.environ.get("BEACON_SSL_VERIFY", "true").lower() not in ("0", "false", "no")
+
 
 def fetch_all_agents() -> List[Dict]:
     """Fetch native + relay agents from the directory page data."""
@@ -29,7 +32,7 @@ def fetch_all_agents() -> List[Dict]:
 
     # Relay agents via discover
     try:
-        resp = requests.get(f"{RELAY_HOST}/beacon/relay/discover?include_dead=true", timeout=10, verify=False)
+        resp = requests.get(f"{RELAY_HOST}/beacon/relay/discover?include_dead=true", timeout=10, verify=SSL_VERIFY)
         if resp.ok:
             relay = resp.json()
             if isinstance(relay, list):
@@ -41,7 +44,7 @@ def fetch_all_agents() -> List[Dict]:
 
     # Native agents — parse from sitemap
     try:
-        resp = requests.get(f"{BASE_URL}/sitemap.xml", timeout=10, verify=False)
+        resp = requests.get(f"{BASE_URL}/sitemap.xml", timeout=10, verify=SSL_VERIFY)
         if resp.ok:
             import re
             urls = re.findall(r"<loc>.*?/beacon/agent/([^<]+)</loc>", resp.text)
@@ -80,7 +83,7 @@ def check_agent_seo(agent_id: str) -> Dict:
 
     # Check HTML profile
     try:
-        resp = requests.get(f"{BASE_URL}/agent/{agent_id}", timeout=8, verify=False)
+        resp = requests.get(f"{BASE_URL}/agent/{agent_id}", timeout=8, verify=SSL_VERIFY)
         if resp.ok:
             html = resp.text
             stats["html_profile"] = True
@@ -101,14 +104,14 @@ def check_agent_seo(agent_id: str) -> Dict:
 
     # Check JSON profile
     try:
-        resp = requests.get(f"{BASE_URL}/agent/{agent_id}.json", timeout=5, verify=False)
+        resp = requests.get(f"{BASE_URL}/agent/{agent_id}.json", timeout=5, verify=SSL_VERIFY)
         stats["json_profile"] = resp.ok
     except Exception:
         pass
 
     # Check XML profile
     try:
-        resp = requests.get(f"{BASE_URL}/agent/{agent_id}.xml", timeout=5, verify=False)
+        resp = requests.get(f"{BASE_URL}/agent/{agent_id}.xml", timeout=5, verify=SSL_VERIFY)
         stats["xml_profile"] = resp.ok
     except Exception:
         pass
@@ -139,7 +142,7 @@ def check_directory_and_sitemap(agent_ids: List[str]) -> Dict[str, Dict[str, boo
     presence = {aid: {"in_directory": False, "in_sitemap": False, "in_llms_txt": False} for aid in agent_ids}
 
     try:
-        resp = requests.get(f"{BASE_URL}/directory", timeout=10, verify=False)
+        resp = requests.get(f"{BASE_URL}/directory", timeout=10, verify=SSL_VERIFY)
         if resp.ok:
             for aid in agent_ids:
                 if aid in resp.text:
@@ -148,7 +151,7 @@ def check_directory_and_sitemap(agent_ids: List[str]) -> Dict[str, Dict[str, boo
         pass
 
     try:
-        resp = requests.get(f"{BASE_URL}/sitemap.xml", timeout=10, verify=False)
+        resp = requests.get(f"{BASE_URL}/sitemap.xml", timeout=10, verify=SSL_VERIFY)
         if resp.ok:
             for aid in agent_ids:
                 if aid in resp.text:
@@ -157,7 +160,7 @@ def check_directory_and_sitemap(agent_ids: List[str]) -> Dict[str, Dict[str, boo
         pass
 
     try:
-        resp = requests.get(f"{BASE_URL}/llms.txt", timeout=10, verify=False)
+        resp = requests.get(f"{BASE_URL}/llms.txt", timeout=10, verify=SSL_VERIFY)
         if resp.ok:
             for aid in agent_ids:
                 if aid in resp.text:
