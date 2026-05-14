@@ -1149,10 +1149,13 @@ def relay_heartbeat():
     db = get_db()
     row = db.execute("SELECT * FROM relay_agents WHERE agent_id = ?", (agent_id,)).fetchone()
     if not row:
+        # SECURITY: reject unknown agents — heartbeat only for already-registered agents.
+        # Attacker with any Bearer token could previously auto-register a spoofed identity
+        # and receive a valid relay_token.
         return cors_json({
-            "error": "Agent not registered",
-            "hint": "Register with /relay/register or signed /relay/ping before sending heartbeats",
-            "code": "AGENT_NOT_REGISTERED",
+            "error": "Unknown agent — register first via /relay/register",
+            "code": "AGENT_NOT_FOUND"
+
         }, 404)
 
     if row["relay_token"] != token:
