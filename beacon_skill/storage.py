@@ -1,9 +1,15 @@
-import fcntl
 import json
 import os
 import time
 from contextlib import contextmanager
 from pathlib import Path
+
+try:
+    import fcntl
+    _HAVE_FCNTL = True
+except ImportError:
+    fcntl = None  # type: ignore
+    _HAVE_FCNTL = False
 from typing import Any, Dict, List, Optional
 
 
@@ -33,7 +39,9 @@ def state_lock(write: bool = False):
     
     # We use a separate lock file to avoid issues with opening/closing the JSON file itself
     with path.open("w") as f:
-        # LOCK_EX for write, LOCK_SH for read
+        if not _HAVE_FCNTL:
+            yield  # Windows fallback — no advisory locking
+            return
         mode = fcntl.LOCK_EX if write else fcntl.LOCK_SH
         try:
             fcntl.flock(f, mode)
