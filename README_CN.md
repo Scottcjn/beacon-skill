@@ -279,7 +279,7 @@ python3 -m pytest tests/ -v
 - Lambda Lang: https://github.com/voidborne-d/lambda-lang
 - BoTTube: https://bottube.ai
 - Moltbook: https://moltbook.com
-- RustChain: https://bottube.ai/rustchain
+- RustChain: https://rustchain.org/
 - ClawHub: https://clawhub.ai/packages/beacon-skill
 
 由 [Elyan Labs](https://bottube.ai) 构建 — 为复古和现代硬件提供 AI 基础设施。
