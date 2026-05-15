@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from .identity import AgentIdentity, agent_id_from_pubkey
-from .storage import _dir, append_jsonl, read_jsonl_tail
+from .storage import _dir, append_jsonl, read_jsonl_tail, jsonl_count
 
 RELAY_STATE_FILE = "relay_agents.json"
 RELAY_LOG_FILE = "relay_log.jsonl"
@@ -524,5 +524,7 @@ class RelayManager:
             "silent": silent,
             "presumed_dead": dead,
             "by_provider": by_provider,
+            "inbox_count": jsonl_count("inbox.jsonl"),
+            "relay_log_count": jsonl_count(RELAY_LOG_FILE),
             "ts": now,
         }
