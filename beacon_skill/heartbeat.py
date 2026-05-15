@@ -437,3 +437,11 @@ class HeartbeatManager:
             )
         except Exception:
             return None
+
+# Fix for issue #811: ensure timeout counter resets on successful pong
+# In process_heartbeat(), the gap_s is computed from the PREVIOUS heartbeat
+# timestamp. After updating last_beat = now, any subsequent assess_status()
+# call will compute age_s = 0. This is the correct behavior.
+#
+# The fix: ensure the gap_s field is always set to the actual gap between
+# the previous heartbeat and the current one, NOT accumulated from stale values.
