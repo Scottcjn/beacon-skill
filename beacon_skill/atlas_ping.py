@@ -11,26 +11,76 @@ Beacon 2.15.0 — Elyan Labs.
 """
 
 import time
+from pathlib import Path
 from typing import Any, Dict, List, Optional
+import json
+import os
 
 import requests
 
 DEFAULT_ATLAS_URL = "https://rustchain.org/beacon"
 ATLAS_PING_INTERVAL_S = 600  # 10 minutes
+TOKEN_FILE_NAME = "atlas_relay_token.json"
 
 # Store relay token between calls
 _relay_token: Optional[str] = None
 
 
+def _token_path() -> Path:
+    """Return the per-user Atlas relay token path."""
+    return Path.home() / ".beacon" / TOKEN_FILE_NAME
+
+
+def _load_token_from_disk() -> Optional[str]:
+    """Load a previously issued Atlas relay token if it is still usable."""
+    path = _token_path()
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+    token = data.get("relay_token")
+    expires = int(data.get("token_expires") or 0)
+    if not token:
+        return None
+    if expires and expires <= int(time.time()):
+        return None
+    return str(token)
+
+
+def _save_token_to_disk(token: str, token_expires: Optional[int] = None) -> None:
+    """Persist the Atlas relay token for daemon restarts."""
+    path = _token_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload: Dict[str, Any] = {
+        "relay_token": token,
+        "saved_at": int(time.time()),
+    }
+    if token_expires:
+        payload["token_expires"] = int(token_expires)
+    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    try:
+        os.chmod(path, 0o600)
+    except Exception:
+        pass
+
+
 def get_stored_token() -> Optional[str]:
     """Get the stored relay token."""
+    global _relay_token
+    if _relay_token:
+        return _relay_token
+    _relay_token = _load_token_from_disk()
     return _relay_token
 
 
-def set_stored_token(token: str) -> None:
+def set_stored_token(token: str, token_expires: Optional[int] = None) -> None:
     """Store the relay token for future heartbeats."""
     global _relay_token
     _relay_token = token
+    _save_token_to_disk(token, token_expires)
 
 
 def atlas_ping(
@@ -76,8 +126,9 @@ def atlas_ping(
         body["preferred_city"] = preferred_city
 
     # Check if we have a relay token (existing agent heartbeat)
-    if _relay_token:
-        body["relay_token"] = _relay_token
+    stored_token = get_stored_token()
+    if stored_token:
+        body["relay_token"] = stored_token
     elif identity:
         # New agent registration - sign the agent_id
         try:
@@ -100,7 +151,7 @@ def atlas_ping(
             result = resp.json()
             # Store relay token for future heartbeats
             if result.get("relay_token"):
-                set_stored_token(result["relay_token"])
+                set_stored_token(result["relay_token"], result.get("token_expires"))
             return result
         return {"ok": False, "error": f"HTTP {resp.status_code}", "body": resp.text[:200]}
     except Exception as exc:
