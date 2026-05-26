@@ -3,10 +3,8 @@
 
 import argparse
 import sys
-from typing import Optional
 
 from .migrate import MoltbookMigrator
-from .hardware import HardwareFingerprint
 
 
 def main() -> None:
@@ -49,59 +47,29 @@ def main() -> None:
     migrator = MoltbookMigrator()
 
     if args.verbose:
-        print(f"[1/4] Initializing migration for agent: {agent_name}")
+        print(f"Migrating agent: {agent_name}")
+        if args.dry_run:
+            print("  (Dry run mode — no changes will be made)")
 
-    # Step 1: Fetch Moltbook profile
-    if args.verbose:
-        print("[2/4] Fetching Moltbook profile...")
     try:
-        profile = migrator.client.fetch_profile(agent_name)
-        if args.verbose:
-            print(f"      Profile loaded: {profile.name}")
-    except Exception as e:
-        print(f"Error: Failed to fetch Moltbook profile: {e}", file=sys.stderr)
-        sys.exit(1)
-
-    # Step 2: Collect hardware fingerprint
-    if args.verbose:
-        print("[3/4] Collecting hardware fingerprint...")
-    try:
-        fingerprint = HardwareFingerprint()
-        hw_data = fingerprint.collect()
-        if args.verbose:
-            print(f"      Fingerprint collected: {hw_data.get('fingerprint_id', 'N/A')[:16]}...")
-    except Exception as e:
-        print(f"Error: Failed to collect hardware fingerprint: {e}", file=sys.stderr)
-        sys.exit(1)
-
-    # Step 3: Perform migration
-    if args.verbose:
-        print("[4/4] Running migration...")
-    try:
-        result = migrator.migrate(
-            agent_name=agent_name,
-            hardware_fingerprint=hw_data,
-            dry_run=args.dry_run,
-        )
+        result = migrator.migrate(agent_name=agent_name, dry_run=args.dry_run)
     except Exception as e:
         print(f"Error: Migration failed: {e}", file=sys.stderr)
         sys.exit(1)
 
-    # Print result summary
-    print()
     if result.success:
-        print("✅ Migration completed successfully!")
-        print(f"   Beacon ID: {result.beacon_id}")
-        print(f"   Profile: {result.profile_url}")
+        print("Migration completed successfully!")
+        if result.beacon_id:
+            print(f"   Beacon ID: {result.beacon_id.agent_id}")
+        if result.agentfolio_link:
+            print(f"   SATP Profile: {result.agentfolio_link.satp_profile_id}")
         if result.dry_run:
-            print("   (Dry run - no changes were made)")
+            print("   (Dry run — no changes were made)")
         sys.exit(0)
     else:
-        print("❌ Migration failed!")
+        print("Migration failed!")
         if result.error_message:
             print(f"   Error: {result.error_message}")
-        if result.beacon_id:
-            print(f"   Beacon ID: {result.beacon_id}")
         sys.exit(1)
 
 

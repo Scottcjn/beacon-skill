@@ -260,6 +260,9 @@ class MoltbookClient:
 
         return profile
 
+    # Alias for backward compatibility with tests and migrate.py
+    get_profile = get_agent_profile
+
     def _fetch_agent_by_name_query(self, agent_name: str) -> Dict[str, Any]:
         """Fetch agent info using the query parameter endpoint (best effort fallback)."""
         try:
