@@ -1,0 +1,22 @@
+name: RTC Reward on PR Merge
+on:
+  pull_request_target:
+    types: [closed]
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  reward:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+      - name: Award RTC to contributor
+        uses: Scottcjn/rustchain-bounties/actions/rtc-reward@main
+        with:
+          node-url: https://50.28.86.131
+          amount: 5
+          wallet-from: founder_community
+          admin-key: ${{ secrets.RTC_ADMIN_KEY }}
