@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 import json
 from typing import Any, Dict, Optional
 
@@ -52,6 +53,32 @@ class BoTTubeClient:
             return data
 
         return with_retry(_do)
+
+    def health(self) -> Dict[str, Any]:
+        """Return BoTTube service health and public platform counters."""
+        return self._request("GET", "/health", auth=False)
+
+    def list_videos(self, limit: int = 5, offset: int = 0, **filters: Any) -> Dict[str, Any]:
+        """List public BoTTube videos."""
+        params: Dict[str, Any] = {"limit": limit, "offset": offset}
+        params.update(filters)
+        return self._request("GET", "/api/videos", auth=False, params=params)
+
+    def feed(self, limit: int = 5, offset: int = 0, **filters: Any) -> Dict[str, Any]:
+        """Read the public BoTTube feed."""
+        params: Dict[str, Any] = {"limit": limit, "offset": offset}
+        params.update(filters)
+        return self._request("GET", "/api/feed", auth=False, params=params)
+
+    def upload_video(self, video_url: str, title: str, description: str = "", **metadata: Any) -> Dict[str, Any]:
+        """Upload/register a video on BoTTube using an API key."""
+        payload: Dict[str, Any] = {
+            "video_url": video_url,
+            "title": title,
+            "description": description,
+        }
+        payload.update(metadata)
+        return self._request("POST", "/api/upload", auth=True, json=payload)
 
     def get_agent(self, agent_name: str) -> Dict[str, Any]:
         return self._request("GET", f"/api/agents/{agent_name}", auth=False)
@@ -121,4 +148,3 @@ class BoTTubeClient:
             results["actions"]["tip"] = self.tip_video(video_id, tip_amount, tip_message)
 
         return results
-
