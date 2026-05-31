@@ -29,12 +29,15 @@ from flask import Blueprint, Response, jsonify, request
 BASE_CHAIN_ID = 8453
 USDC_BASE = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
 X402_FACILITATOR = os.environ.get("X402_FACILITATOR", "https://x402.org/facilitator")
+RUSTCHAIN_API_BASE = os.environ.get("RUSTCHAIN_API_BASE", "https://rustchain.org").rstrip("/")
 
 # Wallet to receive payments — set via env or override
 PAY_TO_ADDRESS = os.environ.get("X402_PAY_TO", "")
 X402_VERSION = 2
 
 x402_bp = Blueprint("x402_bridge", __name__)
+_VERIFIED_RTC_TX_HASHES: Dict[str, float] = {}
+_FINAL_RTC_STATUSES = {"settled", "confirmed", "completed", "finalized", "success", "paid"}
 
 
 # ── Pricing table (USDC, 6 decimals) ──
@@ -170,15 +173,42 @@ def x402_required(service_key: str, description: str = ""):
 def _verify_rtc_payment(rtc_header: str, service_key: str) -> Dict[str, Any]:
     """Verify RTC payment for dual-economy support.
 
-    RTC header format: {"tx_hash": "...", "amount_rtc": 1.0, "from_wallet": "..."}
+    RTC header format:
+    {"tx_hash": "...", "amount_rtc": 1.0, "from_wallet": "...", "to_wallet": "..."}
+
+    The recipient wallet is configured server-side with RTC_PAY_TO,
+    X402_RTC_PAY_TO, RUSTCHAIN_PAY_TO, or X402_PAY_TO. A client-supplied
+    to_wallet is only accepted when it matches that configured recipient.
     Conversion: 1 RTC = $0.10 USD
     """
     import requests as _req
 
     try:
         data = json.loads(rtc_header)
-        tx_hash = data.get("tx_hash", "")
-        amount_rtc = data.get("amount_rtc", 0)
+        if not isinstance(data, dict):
+            return {"verified": False, "error": "malformed_rtc_payment"}
+
+        tx_hash = str(data.get("tx_hash", "")).strip()
+        from_wallet = str(data.get("from_wallet", "")).strip()
+        amount_rtc = float(data.get("amount_rtc", 0))
+        configured_pay_to = (
+            os.environ.get("RTC_PAY_TO")
+            or os.environ.get("X402_RTC_PAY_TO")
+            or os.environ.get("RUSTCHAIN_PAY_TO")
+            or PAY_TO_ADDRESS
+        ).strip()
+        header_pay_to = str(data.get("to_wallet", "")).strip()
+
+        if not tx_hash:
+            return {"verified": False, "error": "missing_tx_hash"}
+        if not from_wallet:
+            return {"verified": False, "error": "missing_from_wallet"}
+        if not configured_pay_to:
+            return {"verified": False, "error": "missing_rtc_pay_to"}
+        if header_pay_to and header_pay_to != configured_pay_to:
+            return {"verified": False, "error": "rtc_pay_to_mismatch"}
+        if tx_hash in _VERIFIED_RTC_TX_HASHES:
+            return {"verified": False, "error": "rtc_payment_replay"}
 
         # Convert USDC price to RTC (1 RTC = $0.10)
         usdc_price = PRICING.get(service_key, 10_000)
@@ -187,18 +217,42 @@ def _verify_rtc_payment(rtc_header: str, service_key: str) -> Dict[str, Any]:
         if amount_rtc < rtc_required:
             return {"verified": False, "error": f"Insufficient RTC: need {rtc_required:.4f}"}
 
-        # Verify TX exists on RustChain
+        # Verify the actual transfer in the recipient wallet history. Checking
+        # only the sender balance would let clients invent tx_hash values.
         resp = _req.get(
-            f"https://rustchain.org/wallet/balance",
-            params={"miner_id": data.get("from_wallet", "")},
-            headers={"X-Admin-Key": os.environ.get("RC_ADMIN_KEY", "")},
+            f"{RUSTCHAIN_API_BASE}/wallet/history",
+            params={"miner_id": configured_pay_to},
             verify=True,
             timeout=10,
         )
-        if resp.ok:
-            return {"verified": True, "tx_hash": tx_hash}
+        if not resp.ok:
+            return {"verified": False, "error": "RustChain verification failed"}
 
-        return {"verified": False, "error": "RustChain verification failed"}
+        txs = resp.json().get("transactions", [])
+        matching_tx = next((tx for tx in txs if str(tx.get("tx_hash", "")) == tx_hash), None)
+        if not matching_tx:
+            return {"verified": False, "error": "rtc_tx_not_found"}
+
+        tx_amount = float(matching_tx.get("amount") or matching_tx.get("amount_rtc") or 0)
+        if tx_amount < rtc_required:
+            return {"verified": False, "error": f"Insufficient RTC transfer: need {rtc_required:.4f}"}
+
+        tx_from = str(matching_tx.get("from", "")).strip()
+        if tx_from != from_wallet:
+            return {"verified": False, "error": "rtc_from_wallet_mismatch"}
+
+        status = str(matching_tx.get("status", "")).strip().lower()
+        if status not in _FINAL_RTC_STATUSES:
+            return {"verified": False, "error": f"unsettled_rtc_tx:{status or 'missing'}"}
+
+        max_age_s = int(os.environ.get("RTC_PAYMENT_MAX_AGE_SECONDS", "3600"))
+        tx_timestamp = matching_tx.get("timestamp")
+        if tx_timestamp and max_age_s > 0:
+            if float(tx_timestamp) < time.time() - max_age_s:
+                return {"verified": False, "error": "stale_rtc_tx"}
+
+        _VERIFIED_RTC_TX_HASHES[tx_hash] = time.time()
+        return {"verified": True, "tx_hash": tx_hash, "amount_rtc": tx_amount}
     except Exception as e:
         return {"verified": False, "error": str(e)}
 
