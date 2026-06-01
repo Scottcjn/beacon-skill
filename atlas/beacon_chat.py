@@ -8,6 +8,8 @@ Runs on port 8071 behind nginx.
 """
 
 import hashlib
+import html
+from urllib.parse import quote as _urlquote
 import os
 import secrets
 import time
@@ -2874,6 +2876,17 @@ def _agent_profile_html(agent, caps, dns_names, profile=None, matches=None):
     }
     matches = matches or []
     trust = trust_snapshot(aid)
+    # ── Stored-XSS fix: HTML-escape every agent-controlled value before it is
+    # interpolated into the JSON-LD or HTML body (loop values escaped inline below).
+    name = html.escape(name)
+    desc = html.escape(desc)
+    seo_desc = html.escape(seo_desc)
+    cap_str = html.escape(cap_str)
+    provider = html.escape(provider)
+    aid = _urlquote(aid, safe="")
+    canonical = html.escape(canonical)
+    seo_url = html.escape(seo_url)
+    model_id = html.escape(str(agent["model_id"] or ""))
 
     # Schema.org JSON-LD — SoftwareApplication
     jsonld = json.dumps({
@@ -2941,7 +2954,7 @@ def _agent_profile_html(agent, caps, dns_names, profile=None, matches=None):
 
     dns_block = ""
     if dns_names:
-        dns_items = "".join(f"<li>{dn['name']}</li>" for dn in dns_names)
+        dns_items = "".join(f"<li>{html.escape(str(dn['name']))}</li>" for dn in dns_names)
         dns_block = f"<h2>DNS Names</h2><ul>{dns_items}</ul>"
 
     collab_sections = []
@@ -2953,11 +2966,11 @@ def _agent_profile_html(agent, caps, dns_names, profile=None, matches=None):
     ):
         if values:
             collab_sections.append(
-                f"<h2>{label}</h2><ul>{''.join(f'<li>{v}</li>' for v in values)}</ul>"
+                f"<h2>{label}</h2><ul>{''.join(f'<li>{html.escape(str(v))}</li>' for v in values)}</ul>"
             )
     if profile.get("preferred_city"):
         collab_sections.append(
-            f"<h2>Preferred City</h2><p>{profile['preferred_city']}</p>"
+            f"<h2>Preferred City</h2><p>{html.escape(str(profile['preferred_city']))}</p>"
         )
     collab_block = "\n".join(collab_sections)
 
@@ -2967,9 +2980,9 @@ def _agent_profile_html(agent, caps, dns_names, profile=None, matches=None):
         for match in matches[:4]:
             match_items.append(
                 "<li>"
-                f"<strong><a href=\"/beacon/agent/{match['agent_id']}\">{match['name']}</a></strong> "
-                f"({match['provider_name']}) — score {match['score']:.1f}"
-                f"<br><span class=\"meta\">{' · '.join(match['reasons'][:3])}</span>"
+                f"<strong><a href=\"/beacon/agent/{_urlquote(str(match['agent_id']), safe="")}\">{html.escape(str(match['name']))}</a></strong> "
+                f"({html.escape(str(match['provider_name']))}) — score {match['score']:.1f}"
+                f"<br><span class=\"meta\">{html.escape(' · '.join(str(r) for r in match['reasons'][:3]))}</span>"
                 "</li>"
             )
         match_block = (
@@ -2981,16 +2994,16 @@ def _agent_profile_html(agent, caps, dns_names, profile=None, matches=None):
     trust_block = (
         "<h2>Trust Review</h2>"
         "<table>"
-        f"<tr><td>Review Status</td><td><span class=\"{trust_badge_class}\">{trust['review_status']}</span></td></tr>"
+        f"<tr><td>Review Status</td><td><span class=\"{trust_badge_class}\">{html.escape(str(trust['review_status']))}</span></td></tr>"
         f"<tr><td>Can Interact</td><td>{'yes' if trust['can_interact'] else 'needs review'}</td></tr>"
         f"<tr><td>Trust Score</td><td>{trust['trust_score']}</td></tr>"
         f"<tr><td>Interaction Total</td><td>{trust['interaction_total']}</td></tr>"
         + (
-            f"<tr><td>Review Reason</td><td>{trust['review_reason']}</td></tr>"
+            f"<tr><td>Review Reason</td><td>{html.escape(str(trust['review_reason']))}</td></tr>"
             if trust["review_reason"] else ""
         )
         + (
-            f"<tr><td>Reviewer Note</td><td>{trust['reviewer_note']}</td></tr>"
+            f"<tr><td>Reviewer Note</td><td>{html.escape(str(trust['reviewer_note']))}</td></tr>"
             if trust["reviewer_note"] else ""
         )
         + "</table>"
@@ -3033,7 +3046,7 @@ ul {{ list-style: none; padding: 0; }} li {{ padding: 4px 0; }}
 <h1>{name}</h1>
 <p class="meta">
   <span class="status {status}">{status}</span>
-  Provider: {provider} · Model: {agent["model_id"]} · Heartbeats: {beat_count}
+  Provider: {provider} · Model: {model_id} · Heartbeats: {beat_count}
 </p>
 <p>{desc}</p>
 <h2>Capabilities</h2>
@@ -3152,9 +3165,9 @@ def seo_agent_directory():
     # Relay agents
     for row in rows:
         assessment = assess_relay_status(int(row["last_heartbeat"]))
-        name = row["name"] or row["agent_id"]
-        provider = KNOWN_PROVIDERS.get(row["provider"], row["provider"])
-        seo_url = row["seo_url"] or ""
+        name = html.escape(row["name"] or row["agent_id"])
+        provider = html.escape(KNOWN_PROVIDERS.get(row["provider"], row["provider"]))
+        seo_url = html.escape(row["seo_url"] or "")
         caps = json.loads(row["capabilities"] or "[]")
 
         link_block = ""
@@ -3163,10 +3176,10 @@ def seo_agent_directory():
 
         cards.append(
             f'<div class="agent-card">'
-            f'<h3><a href="/beacon/agent/{row["agent_id"]}">{name}</a></h3>'
+            f'<h3><a href="/beacon/agent/{_urlquote(row["agent_id"], safe="")}">{name}</a></h3>'
             f'<span class="status {assessment}">{assessment}</span> '
             f'<span class="provider">{provider}</span>{link_block}'
-            f'<p class="caps">{", ".join(caps[:5]) if caps else "general"}</p>'
+            f'<p class="caps">{html.escape(", ".join(str(c) for c in caps[:5])) if caps else "general"}</p>'
             f'</div>'
         )
 
@@ -3626,7 +3639,7 @@ def seo_agent_json(agent_id):
         "profile_url": f"https://rustchain.org/beacon/agent/{row['agent_id']}",
         "directory_url": "https://rustchain.org/beacon/directory",
         "trust_network": "Beacon Atlas",
-        "dofollow_link": f'<a href="https://rustchain.org/beacon/agent/{row["agent_id"]}">{row["name"]}</a>',
+        "dofollow_link": f'<a href="https://rustchain.org/beacon/agent/{_urlquote(row["agent_id"], safe="")}">{html.escape(row["name"] or "")}</a>',
         **trust,
     })
 
