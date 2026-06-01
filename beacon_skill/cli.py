@@ -5899,6 +5899,32 @@ def main(argv: Optional[List[str]] = None) -> None:
     sp.set_defaults(func=cmd_keys_cleanup)
 
 
+    # ── migrate: Moltbook → Beacon ──────────────────────────────────────────
+    def cmd_migrate(args: argparse.Namespace) -> int:
+        from tools.moltbook_migrate.cli import main as migrate_main
+        # Reconstruct argv-style arguments for the migrate CLI
+        migrate_argv = ["prog", "migrate", "--from-moltbook", args.from_moltbook]
+        if args.verbose:
+            migrate_argv.append("--verbose")
+        if args.dry_run:
+            migrate_argv.append("--dry-run")
+        import sys as _sys
+        _sys.argv = migrate_argv
+        try:
+            migrate_main()
+        except SystemExit:
+            pass
+        return 0
+
+    migrate_p = sub.add_parser("migrate", help="Migrate an agent from Moltbook to Beacon Protocol")
+    migrate_p.add_argument(
+        "--from-moltbook", "-f", required=True, metavar="@agent_name",
+        help="Moltbook agent name to migrate"
+    )
+    migrate_p.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
+    migrate_p.add_argument("--dry-run", action="store_true", help="Simulate without making changes")
+    migrate_p.set_defaults(func=cmd_migrate)
+
     register_agentmatrix_parser(sub)
 
     args = p.parse_args(argv_list)
