@@ -14,6 +14,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Award RTC to contributor
+        continue-on-error: true  # rewards are best-effort; never gate CI
         uses: Scottcjn/rustchain-bounties/actions/rtc-reward@main
         with:
           node-url: https://50.28.86.131
