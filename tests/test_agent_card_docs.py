@@ -24,5 +24,9 @@ def test_agent_card_schema_doc_has_minimal_example_and_reject_checklist() -> Non
     for field in ("beacon_version", "agent_id", "public_key_hex", "signature"):
         assert f"| `{field}` | yes |" in text
 
+    assert "## Trust model" in text
+    assert "TOFU-style" in text
+    assert "pre-pinned expected `agent_id` or public key" in text
+
     for rejection in ("required fields are missing", "agent_id does not match", "signature does not verify"):
         assert rejection in text

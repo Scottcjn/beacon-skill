@@ -2,7 +2,7 @@
 
 Beacon agents publish a JSON agent card at `/.well-known/beacon.json` so other agents can discover a stable `agent_id`, verify the agent's public key, and find usable transports.
 
-The card is signed by the agent identity. Verification removes the `signature` field, serializes the remaining JSON with sorted keys and compact separators, verifies the Ed25519 signature with `public_key_hex`, and confirms `agent_id` is derived from that public key.
+The card is signed by the agent identity. Beacon's current verifier removes the `signature` field, serializes the remaining JSON with sorted keys and compact separators, verifies the Ed25519 signature with `public_key_hex`, and confirms `agent_id` is derived from that public key. Discovery clients can layer additional schema and transport-policy checks on top of that signature verification.
 
 ## Minimal valid card
 
@@ -78,6 +78,10 @@ Guidelines:
 - `kinds` lists message kinds the agent is prepared to receive.
 - `payments` is informational; it does not replace the signed-envelope or payment-flow checks for any value transfer.
 - `topics` and `role` are discovery hints and should not be treated as authorization.
+
+## Trust model
+
+A Beacon agent card is self-signed: the public key in the card verifies the signature, and the derived public key fixes the `agent_id`. First-time discovery is therefore TOFU-style unless the client already has a pre-pinned expected `agent_id` or public key. Clients that use pre-pinned identities should reject cards that verify cryptographically but do not match the pinned identity.
 
 ## Discovery-client reject checklist
 
