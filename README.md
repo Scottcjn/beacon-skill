@@ -310,7 +310,7 @@ See `docs/DASHBOARD.md` for full dashboard behavior and troubleshooting.
 
 ## Agent Card
 
-Generate a `.well-known/beacon.json` for internet-scale agent discovery:
+Generate a `.well-known/beacon.json` for internet-scale agent discovery. See [`docs/AGENT_CARD.md`](docs/AGENT_CARD.md) for the minimal required schema, optional fields, transport URL guidance, and discovery-client rejection checklist.
 
 ```bash
 beacon agent-card generate --name sophia-elya
