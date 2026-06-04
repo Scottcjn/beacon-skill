@@ -7,7 +7,10 @@ def test_agent_card_schema_doc_has_minimal_example_and_reject_checklist() -> Non
     text = Path("docs/AGENT_CARD.md").read_text()
     assert "`/.well-known/beacon.json`" in text
     assert "## Field reference" in text
+    assert "## JSON Schema quick reference" in text
     assert "## Discovery-client reject checklist" in text
+    assert "## Troubleshooting" in text
+    assert "docs/BEACON_MECHANISM_TEST.md" in text
 
     # The first JSON block is the minimal card shape shown to new implementers.
     match = re.search(r"```json\n(.*?)\n```", text, re.S)

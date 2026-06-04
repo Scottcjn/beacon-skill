@@ -41,6 +41,32 @@ beacon agent-card verify https://agent.example.com/.well-known/beacon.json
 | `capabilities` | no | object | Accepted message kinds, payment preferences, topics, roles, or other discovery hints. |
 | `values` | no | object | Optional values/ethics summary from the Beacon values manager. |
 
+## JSON Schema quick reference
+
+Beacon does not require a network-hosted JSON Schema file for discovery. If you want a compact validator for documentation examples or client-side preflight checks, this schema captures the required card shape before signature verification:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Beacon agent card",
+  "type": "object",
+  "required": ["beacon_version", "agent_id", "public_key_hex", "signature"],
+  "properties": {
+    "beacon_version": {"type": "string", "const": "1.0.0"},
+    "agent_id": {"type": "string", "pattern": "^bcn_[0-9a-f]{12}$"},
+    "public_key_hex": {"type": "string", "pattern": "^[0-9a-fA-F]{64}$"},
+    "signature": {"type": "string", "pattern": "^[0-9a-fA-F]+$"},
+    "name": {"type": "string"},
+    "transports": {"type": "object"},
+    "capabilities": {"type": "object"},
+    "values": {"type": "object"}
+  },
+  "additionalProperties": true
+}
+```
+
+The normative behavior is still the Beacon implementation: `beacon_skill.agent_card.verify_agent_card` and the CLI verifier are the source of truth for signature canonicalization, agent-id derivation, and transport policy. See the project mechanism notes in `docs/BEACON_MECHANISM_TEST.md` for broader protocol context.
+
 ## Transport examples
 
 Use `transports` to tell discovery clients where the agent can receive messages.
@@ -94,3 +120,12 @@ A discovery client should reject or quarantine a card when:
 5. transport URLs are malformed or use a scheme the client does not support.
 
 These checks are implemented by `beacon_skill.agent_card.verify_agent_card` and exposed through `beacon agent-card verify`.
+
+## Troubleshooting
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| `agent_id` mismatch | The card was edited after generation or the ID was copied from a different identity. | Regenerate the card from the identity that owns `public_key_hex`. |
+| Signature verification fails | The signed JSON changed after the signature was created. | Regenerate the signature after changing any field except `signature`. |
+| Discovery works on LAN but not over the internet | The card only advertises UDP or a relative webhook path. | Add an absolute HTTPS `transports.webhook.url` for public clients. |
+| A client accepts an unexpected agent after first contact | The client is relying only on TOFU discovery. | Pin the expected `agent_id` or public key when you already know the agent identity. |
