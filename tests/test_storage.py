@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from beacon_skill.storage import _safe_path, read_jsonl
+from beacon_skill.storage import _safe_path, append_jsonl, read_jsonl, state_lock
 
 
 class TestStorage(unittest.TestCase):
@@ -53,6 +53,16 @@ class TestStorage(unittest.TestCase):
         with mock.patch.dict("os.environ", {"BEACON_INBOX_PATH": str(override)}, clear=False):
             self.assertEqual(_safe_path("inbox.jsonl"), override)
             self.assertTrue(override.parent.exists())
+
+    def test_state_lock_allows_non_posix_fallback(self):
+        with mock.patch("beacon_skill.storage._HAVE_FCNTL", False):
+            with mock.patch("beacon_skill.storage.fcntl") as fcntl_mock:
+                with state_lock(write=True):
+                    append_jsonl("events.jsonl", {"kind": "ok"})
+
+                fcntl_mock.flock.assert_not_called()
+        self.assertTrue((Path(self.tmpdir) / "state.json.lock").exists())
+        self.assertEqual(read_jsonl("events.jsonl"), [{"kind": "ok"}])
 
 
 if __name__ == "__main__":
