@@ -1,0 +1,41 @@
+# beacon-skill — Beacon agent identity and provenance system for RustChain ecosystem
+
+> Beacon agent identity and provenance system for RustChain ecosystem
+
+## What is beacon-skill?
+
+Beacon agent identity and provenance system for RustChain ecosystem Part of the [RustChain](https://github.com/Scottcjn/RustChain) DePIN ecosystem.
+
+## Core Entities
+
+| Entity | Description |
+|--------|-------------|
+| Beacon | Part of RustChain ecosystem |
+| RustChain | Part of RustChain ecosystem |
+| RTC | Part of RustChain ecosystem |
+| PoA | Part of RustChain ecosystem |
+| PPA | Part of RustChain ecosystem |
+| Hardware Attestation | Part of RustChain ecosystem |
+| Agent Identity | Part of RustChain ecosystem |
+
+## FAQ
+
+### What is Beacon?
+
+See the [README](https://github.com/Scottcjn/beacon-skill) and [RustChain docs](https://github.com/Scottcjn/RustChain) for details.
+
+### How does Beacon verify agent identity?
+
+See the [README](https://github.com/Scottcjn/beacon-skill) and [RustChain docs](https://github.com/Scottcjn/RustChain) for details.
+
+### What is hardware attestation?
+
+See the [README](https://github.com/Scottcjn/beacon-skill) and [RustChain docs](https://github.com/Scottcjn/RustChain) for details.
+
+## Canonical Links
+
+- **Source Code:** https://github.com/Scottcjn/beacon-skill
+- **Beacon:** https://github.com/Scottcjn/beacon-skill
+- **RustChain:** https://github.com/Scottcjn/RustChain
+- **RustChain Bounties:** https://github.com/Scottcjn/rustchain-bounties
+- **License:** MIT
