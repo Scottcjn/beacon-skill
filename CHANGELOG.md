@@ -6,6 +6,14 @@ For the current state of the protocol, see [README.md](README.md). For mechanism
 
 ---
 
+## [v2.16.1] — 2026-06-08
+
+**Windows install fix (regression).** `pip install beacon-skill` failed to import on Windows for the entire 2.16.0 release: the published wheel/sdist predated the `fcntl` Windows guard, so `import beacon_skill` raised `ModuleNotFoundError: No module named 'fcntl'` on every Windows machine (issues [#868](https://github.com/Scottcjn/beacon-skill/issues/868), [#869](https://github.com/Scottcjn/beacon-skill/issues/869)).
+
+- The storage layer already degrades to a non-locking path on Windows (`_HAVE_FCNTL` guard around both the import and the `flock` calls). This release simply re-publishes that fixed source.
+- **CI:** added a cross-platform Package Smoke workflow (Ubuntu + Windows) that builds the wheel, installs it, and runs `import beacon_skill` + `beacon --help` — so a non-importable wheel can never ship again ([#877](https://github.com/Scottcjn/beacon-skill/pull/877)).
+- **Tests:** added Windows `fcntl`-absent regression coverage for storage import and the lock fallback ([#874](https://github.com/Scottcjn/beacon-skill/pull/874), [#873](https://github.com/Scottcjn/beacon-skill/pull/873)).
+
 ## Unreleased — toward v2.17.0
 
 **Headline:** Production-grade Webhook transport, AgentFolio ↔ Beacon dual-layer trust integration (Bounty #2890), relay-auth hardening, and a documentation pass that turns Beacon into something a new contributor can actually onboard to in 20 minutes.
