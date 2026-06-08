@@ -31,7 +31,10 @@ jobs:
           python -m build
 
       - name: Install built wheel
-        run: python -m pip install --force-reinstall dist/*.whl
+        run: >
+          python -c "import glob, subprocess, sys; wheels = glob.glob('dist/*.whl');
+          assert len(wheels) == 1, wheels;
+          subprocess.check_call([sys.executable, '-m', 'pip', 'install', '--force-reinstall', wheels[0]])"
 
       - name: Smoke-test installed package
         run: |
