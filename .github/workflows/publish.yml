@@ -1,0 +1,63 @@
+name: Publish to PyPI
+
+# Publishes beacon-skill to PyPI when a GitHub Release is published
+# (or via manual dispatch). Uses PyPI Trusted Publishing (OIDC) — no API
+# token is stored in the repo.
+#
+# ONE-TIME SETUP (maintainer, on PyPI):
+#   PyPI → project "beacon-skill" → Settings → Publishing → Add a trusted publisher:
+#     Owner: Scottcjn   Repository: beacon-skill
+#     Workflow name: publish.yml   Environment: pypi
+#
+# After that, every published GitHub Release auto-ships to PyPI.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Build wheel + sdist
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build
+      - name: Guard — wheel must contain the Windows fcntl guard
+        # Prevents re-shipping the 2.16.0 regression (unguarded fcntl import).
+        run: >
+          python -c "import glob, zipfile;
+          w = glob.glob('dist/*.whl')[0];
+          s = zipfile.ZipFile(w).read('beacon_skill/storage.py').decode();
+          assert 'try:' in s and 'import fcntl' in s and '_HAVE_FCNTL' in s, 'storage.py is missing the fcntl Windows guard — refusing to publish';
+          print('fcntl guard present in', w)"
+      - name: Smoke-import the built wheel
+        run: |
+          python -m pip install --force-reinstall dist/*.whl
+          python -c "import beacon_skill; print('import OK', beacon_skill.__version__)"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write   # OIDC token for PyPI Trusted Publishing
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
