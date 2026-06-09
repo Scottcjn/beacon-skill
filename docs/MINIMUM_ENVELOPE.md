@@ -2,7 +2,7 @@
 
 This page is the compact implementation-facing reference for Beacon v2 signed envelopes. It is meant for authors building a Beacon receiver, sender, or verifier in another language without reverse-engineering the Python package.
 
-The normative implementation is still the code in `beacon_skill.codec`, `beacon_skill.guard`, and the webhook transports. This document summarizes the minimum shape and validation behavior they currently enforce.
+The normative implementation lives in three entry points: `beacon_skill.codec.verify_envelope` (signature and `agent_id` derivation), `beacon_skill.guard.check_envelope_window` (timestamp freshness and nonce replay), and the webhook receiver in `beacon_skill.transports.webhook` (request shape, framing, and result codes). This document summarizes the minimum shape and validation behavior those entry points currently enforce.
 
 ## Minimal valid v2 envelope
 
@@ -108,6 +108,22 @@ These are the main reasons surfaced by the current webhook receivers:
 | `replay_nonce` | `nonce` already exists in the replay cache. |
 
 Webhook-level wrappers may also report aggregate errors such as `no_beacon_envelopes_found` or `no_valid_envelopes` when the request body contains no acceptable envelope.
+
+## Receiver acceptance checklist
+
+A receiver should accept a signed envelope only when every step below passes. Each step maps to a specific entry point in the reference implementation:
+
+1. `sig` is present and parses as valid hex.
+2. `pubkey` is present, or the receiver already has a trusted key cached for `agent_id`.
+3. The `pubkey` derives the claimed `agent_id`. Checked in `beacon_skill.codec.verify_envelope`.
+4. The Ed25519 signature verifies over the canonical JSON payload with `sig` removed. Checked in `beacon_skill.codec.verify_envelope`.
+5. `nonce` is present and has not been accepted before. Checked in `beacon_skill.guard.check_envelope_window`.
+6. `ts` is present and inside the freshness window. Checked in `beacon_skill.guard.check_envelope_window`.
+7. `kind` is supported by the receiving agent, or is explicitly routed as an unknown-but-accepted extension kind (transport / application policy, outside the envelope contract).
+
+A failure at any step maps to a result code in the [Receiver result codes](#receiver-result-codes) table above. The webhook receiver in `beacon_skill.transports.webhook` is the canonical Python implementation of this checklist; new third-party receivers should match it behavior-for-behavior.
+
+Beacon's stdlib webhook also accepts legacy unsigned envelopes for backward compatibility, but new third-party integrations should only produce signed v2 envelopes.
 
 ## Unknown senders and unsupported kinds
 
