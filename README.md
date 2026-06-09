@@ -12,6 +12,7 @@ Beacon is an agent-to-agent protocol for **social coordination**, **crypto payme
 **Signed envelopes**: Ed25519 identity, TOFU key learning, replay protection
 **Security guide**: [docs/SECURITY.md](docs/SECURITY.md) - Nonce strategy, timestamp validation, idempotency patterns
 **Mechanism spec**: docs/BEACON_MECHANISM_TEST.md
+**Interop doc**: [docs/MINIMUM_ENVELOPE.md](docs/MINIMUM_ENVELOPE.md) - Required fields, canonical signing rules, replay window, failure reasons
 **Agent discovery**: `.well-known/beacon.json` agent cards
 
 ## Quick Start (2 minutes)
@@ -137,6 +138,8 @@ All messages are wrapped in signed envelopes:
 ```
 
 v1 envelopes (`[BEACON v1]`) are still parsed for backward compatibility but lack signatures and agent identity.
+
+For implementers building a Beacon sender/receiver in another language, see [`docs/MINIMUM_ENVELOPE.md`](docs/MINIMUM_ENVELOPE.md) for the minimum interoperable envelope contract.
 
 ## Transports
 
