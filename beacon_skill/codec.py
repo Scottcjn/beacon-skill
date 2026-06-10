@@ -133,15 +133,20 @@ def _parse_version(header_line: str) -> int:
 
 def decode_envelopes(text: str) -> List[Dict[str, Any]]:
     """Extract all Beacon envelopes (v1 and v2) found in a text blob.
-
+    
     Each returned dict includes the parsed JSON body.
     v2 envelopes include agent_id, nonce, sig fields.
     """
     if not isinstance(text, str):
         raise TypeError(f"decode_envelopes expects str, got {type(text).__name__}")
+    
+    MAX_ENVELOPES = 100  # Prevent Memory Exhaustion DoS
     out: List[Dict[str, Any]] = []
     idx = 0
     while True:
+        if len(out) >= MAX_ENVELOPES:
+            break
+            
         h = text.find(BEACON_HEADER_PREFIX, idx)
         if h < 0:
             break
