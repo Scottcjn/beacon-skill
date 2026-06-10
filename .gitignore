@@ -8,3 +8,6 @@ build/
 venv/
 .DS_Store
 
+
+atlas/*.db
+*.db
