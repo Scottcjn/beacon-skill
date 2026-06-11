@@ -11,6 +11,11 @@ BEACON_VERSION = 2
 BEACON_HEADER_PREFIX = "[BEACON v"
 NONCE_BYTES = 6  # 12 hex chars
 
+# Cap on envelopes decoded from a single text blob. Guards against memory
+# exhaustion when fed adversarially large inputs; decode_envelopes silently
+# stops after this many.
+MAX_ENVELOPES = 100
+
 # Known envelope kinds — used by modules to set the "kind" field in payloads.
 # The codec itself is kind-agnostic; this list serves as a protocol reference.
 ENVELOPE_KINDS = {
@@ -133,20 +138,22 @@ def _parse_version(header_line: str) -> int:
 
 def decode_envelopes(text: str) -> List[Dict[str, Any]]:
     """Extract all Beacon envelopes (v1 and v2) found in a text blob.
-    
+
     Each returned dict includes the parsed JSON body.
     v2 envelopes include agent_id, nonce, sig fields.
+
+    Decoding stops after MAX_ENVELOPES envelopes (memory-exhaustion guard);
+    any further envelopes in the blob are silently ignored.
     """
     if not isinstance(text, str):
         raise TypeError(f"decode_envelopes expects str, got {type(text).__name__}")
-    
-    MAX_ENVELOPES = 100  # Prevent Memory Exhaustion DoS
+
     out: List[Dict[str, Any]] = []
     idx = 0
     while True:
         if len(out) >= MAX_ENVELOPES:
             break
-            
+
         h = text.find(BEACON_HEADER_PREFIX, idx)
         if h < 0:
             break
