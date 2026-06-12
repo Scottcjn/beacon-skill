@@ -1,6 +1,6 @@
 {
   "name": "beacon-skill",
-  "version": "2.16.0",
+  "version": "2.16.1",
   "description": "Beacon - the AI agent orchestrator. 13 transports, agent scorecard dashboard, heartbeat, mayday, accords, virtual cities, proof-of-thought, relay, memory markets, hybrid districts, x402 micropayments, compute marketplace",
   "bin": {
     "beacon": "bin/beacon.js"
@@ -79,6 +79,6 @@
     ],
     "author": "Elyan Labs",
     "homepage": "https://bottube.ai/skills/beacon",
-    "version": "2.16.0"
+    "version": "2.16.1"
   }
 }
