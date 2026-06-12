@@ -15,6 +15,7 @@ import hashlib
 import json
 import secrets
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -26,6 +27,8 @@ RELAY_LOG_FILE = "relay_log.jsonl"
 
 # Relay token TTL: 24 hours
 RELAY_TOKEN_TTL_S = 86400
+# Warn while there is still enough time to send a heartbeat and refresh the TTL.
+RELAY_TOKEN_REFRESH_WARNING_S = 3600
 # Heartbeat timeout: 15 minutes of silence = inactive
 RELAY_SILENCE_THRESHOLD_S = 900
 # 1 hour = presumed dead
@@ -374,6 +377,111 @@ class RelayManager:
         data["status"] = assessed_status
         agent.status = assessed_status
         return agent.to_public_dict()
+
+    def token_status(
+        self,
+        agent_id: Optional[str] = None,
+        *,
+        refresh_window_s: int = RELAY_TOKEN_REFRESH_WARNING_S,
+    ) -> Dict[str, Any]:
+        """Return operator-safe relay credential and Atlas status.
+
+        The relay token itself is intentionally never returned. If no agent ID
+        is supplied, the host identity is preferred, followed by the sole local
+        relay registration when only one exists.
+        """
+        agents = self._load_agents()
+        selected_id = agent_id
+
+        if not selected_id and self._host_identity:
+            host_agent_id = getattr(self._host_identity, "agent_id", "")
+            if host_agent_id in agents:
+                selected_id = host_agent_id
+
+        if not selected_id and len(agents) == 1:
+            selected_id = next(iter(agents))
+
+        if not selected_id:
+            if not agents:
+                return {
+                    "error": "No relay registration found",
+                    "code": "NOT_REGISTERED",
+                    "active": False,
+                    "expires_at": None,
+                    "atlas_status": "unregistered",
+                    "next_action": (
+                        "beacon relay register --pubkey <pubkey> "
+                        "--model-id <model-id> --name <unique-name>"
+                    ),
+                }
+            return {
+                "error": "Multiple relay registrations found; specify agent_id",
+                "code": "AGENT_ID_REQUIRED",
+                "available_agents": sorted(agents),
+                "next_action": "beacon relay status <agent-id>",
+            }
+
+        data = agents.get(selected_id)
+        if not data:
+            return {
+                "error": "Agent not registered",
+                "code": "NOT_FOUND",
+                "agent_id": selected_id,
+                "active": False,
+                "expires_at": None,
+                "atlas_status": "unregistered",
+                "next_action": (
+                    "beacon relay register --pubkey <pubkey> "
+                    "--model-id <model-id> --name <unique-name>"
+                ),
+            }
+
+        now = int(time.time())
+        try:
+            expires_at = int(data.get("token_expires", 0))
+        except (TypeError, ValueError):
+            expires_at = 0
+        seconds_remaining = max(0, expires_at - now)
+        active = expires_at > now
+        atlas_status = RelayAgent(data).assess_status()
+
+        expiry_iso = None
+        if expires_at > 0:
+            expiry_iso = (
+                datetime.fromtimestamp(expires_at, tz=timezone.utc)
+                .isoformat()
+                .replace("+00:00", "Z")
+            )
+
+        heartbeat_command = (
+            f"beacon relay heartbeat --agent-id {selected_id} "
+            "--token <relay-token> --status alive"
+        )
+        if not active:
+            name = json.dumps(str(data.get("name") or "<unique-name>"))
+            next_action = (
+                "beacon relay register "
+                f"--pubkey {data.get('pubkey_hex') or '<pubkey>'} "
+                f"--model-id {data.get('model_id') or '<model-id>'} "
+                f"--provider {data.get('provider') or 'other'} "
+                f"--name {name}"
+            )
+        elif seconds_remaining <= max(0, int(refresh_window_s)):
+            next_action = heartbeat_command
+        elif atlas_status != "active":
+            next_action = heartbeat_command
+        else:
+            next_action = "none"
+
+        return {
+            "agent_id": selected_id,
+            "active": active,
+            "expires_at": expiry_iso,
+            "expires_at_epoch": expires_at,
+            "seconds_remaining": seconds_remaining,
+            "atlas_status": atlas_status,
+            "next_action": next_action,
+        }
 
     # ── Message Forwarding ──
 

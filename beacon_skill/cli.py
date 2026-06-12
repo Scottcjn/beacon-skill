@@ -4179,6 +4179,17 @@ def cmd_relay_heartbeat(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_relay_status(args: argparse.Namespace) -> int:
+    from .relay import RelayManager
+    identity = _load_identity(args)
+    mgr = RelayManager(host_identity=identity)
+    agent_id = getattr(args, "agent_id", None)
+    refresh_window = int(getattr(args, "refresh_window", 3600))
+    result = mgr.token_status(agent_id, refresh_window_s=refresh_window)
+    print(json.dumps(result, indent=2, default=str))
+    return 1 if result.get("error") else 0
+
+
 def cmd_relay_get(args: argparse.Namespace) -> int:
     from .relay import RelayManager
     mgr = RelayManager()
@@ -5770,6 +5781,17 @@ def main(argv: Optional[List[str]] = None) -> None:
     sp.add_argument("--token", required=True, help="Authentication token")
     sp.add_argument("--status", default="alive", help="Status: alive, busy, draining")
     sp.set_defaults(func=cmd_relay_heartbeat)
+
+    sp = relay_sub.add_parser("status", help="Show relay token expiry and Atlas refresh guidance")
+    sp.add_argument("agent_id", nargs="?", default=None, help="Agent ID (omit for own or sole relay)")
+    sp.add_argument(
+        "--refresh-window",
+        type=int,
+        default=3600,
+        help="Warn when token expires within this many seconds (default: 3600)",
+    )
+    sp.add_argument("--password", default=None, help="Password for encrypted identity")
+    sp.set_defaults(func=cmd_relay_status)
 
     sp = relay_sub.add_parser("get", help="Get details for a relay agent")
     sp.add_argument("agent_id", help="Agent ID to look up")
