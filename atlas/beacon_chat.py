@@ -21,6 +21,7 @@ from collections import OrderedDict
 from urllib.parse import urlparse
 import requests as http_requests
 from flask import Flask, request, jsonify, g
+from beacon_skill.codec import verify_envelope
 from beacon_skill.trust import TrustManager
 
 # Optional Ed25519 verification — relay still works without it
@@ -268,6 +269,11 @@ def parse_relay_seo_nonce(data, now):
     return _parse_nonce_fields(data, now, route_name="/relay/heartbeat/seo")
 
 
+def parse_relay_message_nonce(data, now):
+    """Validate and normalize nonce/timestamp fields for signed relay messages."""
+    return _parse_nonce_fields(data, now, route_name="/relay/message")
+
+
 def _reserve_nonce(db, table_name, agent_id, nonce, ts_value, now):
     """Reserve nonce for replay window. Returns False if nonce already seen."""
     db.execute(
@@ -290,6 +296,10 @@ def reserve_relay_ping_nonce(db, agent_id, nonce, ts_value, now):
 
 def reserve_relay_seo_nonce(db, agent_id, nonce, ts_value, now):
     return _reserve_nonce(db, "relay_seo_update_nonces", agent_id, nonce, ts_value, now)
+
+
+def reserve_relay_message_nonce(db, agent_id, nonce, ts_value, now):
+    return _reserve_nonce(db, "relay_message_nonces", agent_id, nonce, ts_value, now)
 
 
 def build_relay_seo_signature_payload(agent_id, seo_url, seo_description, ts_value, nonce):
@@ -452,6 +462,15 @@ def init_db():
     """)
     conn.execute("""
         CREATE TABLE IF NOT EXISTS relay_seo_update_nonces (
+            agent_id TEXT NOT NULL,
+            nonce TEXT NOT NULL,
+            ts REAL NOT NULL,
+            created_at REAL NOT NULL,
+            PRIMARY KEY (agent_id, nonce)
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS relay_message_nonces (
             agent_id TEXT NOT NULL,
             nonce TEXT NOT NULL,
             ts REAL NOT NULL,
@@ -1468,6 +1487,8 @@ def relay_message():
 
     if not agent_id or not envelope:
         return cors_json({"error": "agent_id and envelope required"}, 400)
+    if not isinstance(envelope, dict):
+        return cors_json({"error": "envelope must be an object"}, 400)
 
     # Authenticate
     db = get_db()
@@ -1478,6 +1499,36 @@ def relay_message():
     now = time.time()
     if row["token_expires"] < now:
         return cors_json({"error": "Token expired — re-register"}, 401)
+    if row["status"] == "revoked":
+        return cors_json({"error": "This agent identity has been revoked"}, 403)
+
+    envelope_agent_id = str(envelope.get("agent_id") or "").strip()
+    if envelope_agent_id != agent_id:
+        return cors_json({
+            "error": "Envelope agent_id must match authenticated relay agent",
+            "code": "AGENT_ID_MISMATCH",
+        }, 403)
+
+    verified = verify_envelope(envelope, known_keys={agent_id: row["pubkey_hex"]})
+    if verified is None:
+        return cors_json({
+            "error": "Envelope signature unverifiable",
+            "code": "SIGNATURE_UNVERIFIABLE",
+        }, 400)
+    if verified is False:
+        return cors_json({
+            "error": "Invalid envelope signature",
+            "code": "SIGNATURE_INVALID",
+        }, 403)
+
+    nonce, ts_value, err = parse_relay_message_nonce(envelope, now)
+    if err:
+        return err
+    if not reserve_relay_message_nonce(db, agent_id, nonce, ts_value, now):
+        return cors_json({
+            "error": "nonce replay detected",
+            "code": "NONCE_REPLAY",
+        }, 409)
 
     # Stamp envelope with relay provenance
     envelope["_relay"] = True
