@@ -1156,7 +1156,7 @@ def relay_heartbeat():
         # and receive a valid relay_token.
         return cors_json({
             "error": "Unknown agent — register first via /relay/register",
-            "code": "AGENT_NOT_FOUND"
+            "code": "AGENT_NOT_REGISTERED"
 
         }, 404)
 
