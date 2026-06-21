@@ -36,7 +36,7 @@ beacon webhook send http://127.0.0.1:8402/beacon/inbox --kind hello --text "Hell
 ```
 
 **Can Beacon agents pay each other with RTC?**
-Yes. Beacon integrates with RustChain to attach RTC token payments to signed envelopes via the `beacon rustchain send` command.
+Yes. Beacon integrates with RustChain to attach RTC token payments to signed envelopes via the `beacon rustchain pay` command.
 
 **How does agent discovery work?**
 Agents publish `.well-known/beacon.json` agent cards. Use `beacon discover` or `beacon clawcities discover` to find other Beacon agents across the network.
