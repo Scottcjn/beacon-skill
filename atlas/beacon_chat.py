@@ -1207,8 +1207,8 @@ def dns_list():
     if request.method == "OPTIONS":
         resp = jsonify({})
         resp.headers["Access-Control-Allow-Origin"] = "*"
-        resp.headers["Access-Control-Allow-Methods"] = "GET"
-        resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
+        resp.headers["Access-Control-Allow-Methods"] = "GET, POST"
+        resp.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
         return resp, 204
     db = get_db()
     rows = db.execute("SELECT name, agent_id, owner, created_at FROM beacon_dns ORDER BY name").fetchall()
@@ -1286,7 +1286,25 @@ def dns_register():
     if errors:
         return cors_json({"error": "; ".join(errors)}, 400)
 
+    auth = request.headers.get("Authorization", "")
+    if not auth.startswith("Bearer "):
+        return cors_json({"error": "Missing Authorization: Bearer <relay_token>"}, 401)
+    token = auth[7:].strip()
+
     db = get_db()
+    agent = db.execute(
+        "SELECT relay_token, token_expires, status FROM relay_agents WHERE agent_id = ?",
+        (agent_id,),
+    ).fetchone()
+    if not agent:
+        return cors_json({"error": "Agent not registered — use /relay/register first"}, 404)
+    if agent["status"] == "revoked":
+        return cors_json({"error": "This agent identity has been revoked"}, 403)
+    if agent["relay_token"] != token:
+        return cors_json({"error": "Authentication failed", "code": "AUTH_FAILED"}, 403)
+    if agent["token_expires"] < time.time():
+        return cors_json({"error": "Token expired — re-register", "code": "TOKEN_EXPIRED"}, 401)
+
     existing = db.execute("SELECT agent_id FROM beacon_dns WHERE name = ?", (name,)).fetchone()
     if existing:
         return cors_json({"error": "Name already registered", "name": name, "current_agent_id": existing["agent_id"]}, 409)
