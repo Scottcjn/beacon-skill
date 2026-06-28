@@ -4,7 +4,14 @@ All notable changes to Beacon (`beacon-skill`) are documented here. Beacon follo
 
 For the current state of the protocol, see [README.md](README.md). For mechanism specifications, see [docs/BEACON_MECHANISM_TEST.md](docs/BEACON_MECHANISM_TEST.md) and the BEPs (Beacon Enhancement Proposals).
 
+
 ---
+
+## [2.17.0] - 2026-06-28
+
+### Added
+- `beacon record emit` / `beacon record verify` — signed Ed25519 **continuity records** for the Beacon Atlas persistence registry. `emit` builds the canonical signed object (`beacon` id, `pubkey`, `last_seen`, `live_q`, `override`, `expiry`, `sig`) that a stranger can use to confirm you, or prove you wrong, after you go quiet; `verify` checks the signature (proves key control, not just a claim). Canonical form is sorted-keys compact JSON with `sig` empty, matching the registry ingest so an emitted record registers as-is.
+
 
 ## [v2.16.1] — 2026-06-08
 
