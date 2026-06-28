@@ -958,7 +958,7 @@ def relay_register():
         capabilities: List of domains (e.g. ["coding", "research", "creative"])
         webhook_url: Optional callback URL
         name: Human-readable name
-        signature: Optional Ed25519 signature for verification
+        signature: Ed25519 signature proving ownership of pubkey_hex
 
     Returns:
         agent_id, relay_token, token_expires, ttl_s
@@ -1025,23 +1025,23 @@ def relay_register():
     if not isinstance(capabilities, list):
         return cors_json({"error": "capabilities must be a list"}, 400)
 
-    # Verify signature if provided and nacl is available
-    sig_verified = None
-    if signature:
-        reg_payload = json.dumps({
-            "model_id": model_id,
-            "provider": provider,
-            "pubkey_hex": pubkey_hex,
-        }, sort_keys=True, separators=(",", ":")).encode("utf-8")
-        sig_verified = verify_ed25519(pubkey_hex, signature, reg_payload)
-        if sig_verified is None:
-            app.logger.error("NaCl unavailable, rejecting signed registration for pubkey %s", pubkey_hex[:16])
-            return cors_json({
-                "error": "Signature verification unavailable",
-                "hint": "Server missing Ed25519 verification support (PyNaCl)"
-            }, 503)
-        if sig_verified is False:
-            return cors_json({"error": "Invalid Ed25519 signature"}, 403)
+    if not signature:
+        return cors_json({"error": "signature required for relay registration"}, 400)
+
+    reg_payload = json.dumps({
+        "model_id": model_id,
+        "provider": provider,
+        "pubkey_hex": pubkey_hex,
+    }, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    sig_verified = verify_ed25519(pubkey_hex, signature, reg_payload)
+    if sig_verified is None:
+        app.logger.error("NaCl unavailable, rejecting signed registration for pubkey %s", pubkey_hex[:16])
+        return cors_json({
+            "error": "Signature verification unavailable",
+            "hint": "Server missing Ed25519 verification support (PyNaCl)"
+        }, 503)
+    if sig_verified is False:
+        return cors_json({"error": "Invalid Ed25519 signature"}, 403)
 
     # Derive agent_id
     agent_id = agent_id_from_pubkey_hex(pubkey_hex)

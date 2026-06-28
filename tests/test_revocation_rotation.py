@@ -74,18 +74,24 @@ class TestKeyRevocationRotation(unittest.TestCase):
         
         self._insert_agent(agent_id, pubkey, status="revoked")
         
-        # Try to register again with same pubkey
-        response = self.client.post(
-            "/relay/register",
-            json={
-                "pubkey_hex": pubkey,
-                "model_id": "new-model",
-                "name": "New Name",
-                "provider": "beacon"
-            }
-        )
-        self.assertEqual(response.status_code, 403)
-        self.assertIn("revoked", response.get_json()["error"])
+        # Try to register again with same pubkey and a valid ownership proof.
+        original_verify = beacon_chat.verify_ed25519
+        beacon_chat.verify_ed25519 = lambda *_args, **_kwargs: True
+        try:
+            response = self.client.post(
+                "/relay/register",
+                json={
+                    "pubkey_hex": pubkey,
+                    "model_id": "new-model",
+                    "name": "New Name",
+                    "provider": "beacon",
+                    "signature": "aa" * 64,
+                }
+            )
+            self.assertEqual(response.status_code, 403)
+            self.assertIn("revoked", response.get_json()["error"])
+        finally:
+            beacon_chat.verify_ed25519 = original_verify
 
     @unittest.skipUnless(HAS_NACL, "pynacl not installed")
     def test_key_rotation_success(self):

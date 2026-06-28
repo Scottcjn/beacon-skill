@@ -57,7 +57,9 @@ def _insert_relay_agent(agent_id, *, name, capabilities=None, metadata=None, pro
         db.commit()
 
 
-def test_relay_register_persists_collaboration_metadata(client):
+def test_relay_register_persists_collaboration_metadata(client, monkeypatch):
+    monkeypatch.setattr(beacon_chat, "verify_ed25519", lambda *_args, **_kwargs: True)
+
     resp = client.post(
         "/relay/register",
         json={
@@ -72,6 +74,7 @@ def test_relay_register_persists_collaboration_metadata(client):
             "curiosities": ["PowerPC"],
             "preferred_city": "New Orleans",
             "values_hash": "abc123",
+            "signature": "aa" * 64,
         },
     )
     assert resp.status_code == 201
