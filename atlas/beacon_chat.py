@@ -850,7 +850,7 @@ def list_contracts():
         resp = jsonify({})
         resp.headers["Access-Control-Allow-Origin"] = "*"
         resp.headers["Access-Control-Allow-Methods"] = "GET, POST"
-        resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
+        resp.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
         return resp, 204
 
     db = get_db()
@@ -865,6 +865,39 @@ def list_contracts():
             "created_at": r["created_at"], "updated_at": r["updated_at"],
         })
     return cors_json(contracts)
+
+
+def _authenticated_relay_agent_id():
+    """Return the registered relay agent for the Bearer token on state-changing APIs."""
+    auth = request.headers.get("Authorization", "")
+    if not auth.startswith("Bearer "):
+        return None, cors_json({"error": "Missing Authorization: Bearer <relay_token>"}, 401)
+
+    token = auth[7:].strip()
+    if not token:
+        return None, cors_json({"error": "Missing Authorization: Bearer <relay_token>"}, 401)
+
+    row = get_db().execute(
+        "SELECT agent_id, token_expires FROM relay_agents WHERE relay_token = ?",
+        (token,),
+    ).fetchone()
+    if not row:
+        return None, cors_json({"error": "Invalid relay token", "code": "AUTH_FAILED"}, 403)
+    if row["token_expires"] < time.time():
+        return None, cors_json({"error": "Token expired — re-register", "code": "TOKEN_EXPIRED"}, 401)
+    return row["agent_id"], None
+
+
+def _require_contract_party_token(allowed_agent_ids):
+    agent_id, error = _authenticated_relay_agent_id()
+    if error:
+        return None, error
+    if agent_id not in allowed_agent_ids:
+        return None, cors_json({
+            "error": "Relay token is not authorized for this contract",
+            "code": "AUTH_FAILED",
+        }, 403)
+    return agent_id, None
 
 
 @app.route("/api/contracts", methods=["POST"])
@@ -916,6 +949,10 @@ def create_contract():
     if errors:
         return cors_json({"error": "; ".join(errors)}, 400)
 
+    _, auth_error = _require_contract_party_token({from_agent})
+    if auth_error:
+        return auth_error
+
     contract_id = f"ctr_{uuid.uuid4().hex[:8]}"
     db = get_db()
     db.execute(
@@ -940,7 +977,7 @@ def update_contract(contract_id):
         resp = jsonify({})
         resp.headers["Access-Control-Allow-Origin"] = "*"
         resp.headers["Access-Control-Allow-Methods"] = "PATCH"
-        resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
+        resp.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
         return resp, 204
 
     data = request.get_json(silent=True)
@@ -952,9 +989,16 @@ def update_contract(contract_id):
         return cors_json({"error": f"Invalid state (must be: {', '.join(VALID_CONTRACT_STATES)})"}, 400)
 
     db = get_db()
-    existing = db.execute("SELECT id FROM contracts WHERE id = ?", (contract_id,)).fetchone()
+    existing = db.execute(
+        "SELECT id, from_agent, to_agent FROM contracts WHERE id = ?",
+        (contract_id,),
+    ).fetchone()
     if not existing:
         return cors_json({"error": "Contract not found"}, 404)
+
+    _, auth_error = _require_contract_party_token({existing["from_agent"], existing["to_agent"]})
+    if auth_error:
+        return auth_error
 
     db.execute("UPDATE contracts SET state = ?, updated_at = ? WHERE id = ?", (new_state, time.time(), contract_id))
     db.commit()

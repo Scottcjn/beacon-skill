@@ -1,5 +1,6 @@
 import importlib.util
 import sqlite3
+import time
 from pathlib import Path
 
 
@@ -38,6 +39,40 @@ def setup_function():
     )
     conn.commit()
     conn.close()
+
+
+def _upsert_relay_agent(agent_id, token):
+    now = time.time()
+    conn = sqlite3.connect(beacon_chat.DB_PATH)
+    try:
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO relay_agents (
+                agent_id, pubkey_hex, model_id, provider, capabilities, webhook_url,
+                relay_token, token_expires, name, status, beat_count, registered_at,
+                last_heartbeat, metadata
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                agent_id,
+                "11" * 32,
+                "test-model",
+                "beacon",
+                "[]",
+                "",
+                token,
+                now + 3600,
+                agent_id,
+                "active",
+                1,
+                now,
+                now,
+                "{}",
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def test_rate_limiter_ttl_cleanup_and_limit():
@@ -93,11 +128,15 @@ def test_api_write_limit_is_per_ip():
     beacon_chat.app.config["TESTING"] = True
     beacon_chat.app.config["RATE_LIMIT_WRITE_PER_MIN"] = 1
 
+    _upsert_relay_agent("bcn_rate_from", "relay_rate_from_token")
+    _upsert_relay_agent("bcn_rate_to", "relay_rate_to_token")
+
     client = beacon_chat.app.test_client()
-    payload = {"from": "bcn_sophia_elya", "to": "bcn_deep_seeker", "type": "rent", "amount": 1, "term": "7d"}
-    r1 = client.post("/api/contracts", json=payload, environ_overrides={"REMOTE_ADDR": "10.10.10.1"})
-    r2 = client.post("/api/contracts", json=payload, environ_overrides={"REMOTE_ADDR": "10.10.10.1"})
-    r3 = client.post("/api/contracts", json=payload, environ_overrides={"REMOTE_ADDR": "10.10.10.2"})
+    payload = {"from": "bcn_rate_from", "to": "bcn_rate_to", "type": "rent", "amount": 1, "term": "7d"}
+    headers = {"Authorization": "Bearer relay_rate_from_token"}
+    r1 = client.post("/api/contracts", headers=headers, json=payload, environ_overrides={"REMOTE_ADDR": "10.10.10.1"})
+    r2 = client.post("/api/contracts", headers=headers, json=payload, environ_overrides={"REMOTE_ADDR": "10.10.10.1"})
+    r3 = client.post("/api/contracts", headers=headers, json=payload, environ_overrides={"REMOTE_ADDR": "10.10.10.2"})
 
     assert r1.status_code == 201
     assert r2.status_code == 429
