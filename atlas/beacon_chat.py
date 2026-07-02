@@ -2961,6 +2961,33 @@ def relay_ping():
 from datetime import datetime, timezone
 
 
+def _safe_href(url):
+    """Return url only if it uses a safe scheme, else "".
+
+    html.escape neutralizes quote-breakout but does not stop a javascript:
+    or data: URL from running when the string is placed in an href. The
+    /relay/heartbeat/seo write path validates the scheme on input, but the
+    crawlable profile and directory pages are public and also render rows
+    that can arrive from other write paths or predate that check, so gate
+    the scheme again at output.
+    """
+    if not url:
+        return ""
+    candidate = str(url).strip()
+    if candidate.startswith("/") and not candidate.startswith("//"):
+        return candidate
+    try:
+        scheme = urlparse(candidate).scheme.lower()
+    except ValueError:
+        # Malformed URLs (e.g. bad IPv6 literals like http://[) raise here.
+        # Fail closed rather than let the exception 500 the page, since a single
+        # poisoned seo_url is looped over the whole public directory.
+        return ""
+    if scheme in ("http", "https"):
+        return candidate
+    return ""
+
+
 def _agent_profile_html(agent, caps, dns_names, profile=None, matches=None):
     """Build a full crawlable HTML profile page for an agent with dofollow links."""
     name = agent["name"] or agent["agent_id"]
@@ -2998,7 +3025,7 @@ def _agent_profile_html(agent, caps, dns_names, profile=None, matches=None):
     provider = html.escape(provider)
     aid = _urlquote(aid, safe="")
     canonical = html.escape(canonical)
-    seo_url = html.escape(seo_url)
+    seo_url = html.escape(_safe_href(seo_url))
     model_id = html.escape(str(agent["model_id"] or ""))
 
     # Schema.org JSON-LD — SoftwareApplication
@@ -3269,7 +3296,7 @@ def seo_agent_directory():
     for aid, persona in AGENT_PERSONAS.items():
         cards.append(
             f'<div class="agent-card">'
-            f'<h3><a href="/beacon/agent/{aid}">{persona["name"]}</a></h3>'
+            f'<h3><a href="/beacon/agent/{aid}">{html.escape(persona["name"])}</a></h3>'
             f'<span class="status active">active</span> '
             f'<span class="provider">Elyan Labs</span>'
             f'</div>'
@@ -3280,7 +3307,7 @@ def seo_agent_directory():
         assessment = assess_relay_status(int(row["last_heartbeat"]))
         name = html.escape(row["name"] or row["agent_id"])
         provider = html.escape(KNOWN_PROVIDERS.get(row["provider"], row["provider"]))
-        seo_url = html.escape(row["seo_url"] or "")
+        seo_url = html.escape(_safe_href(row["seo_url"]))
         caps = json.loads(row["capabilities"] or "[]")
 
         link_block = ""
@@ -3316,7 +3343,7 @@ def seo_agent_directory():
         },
     }, indent=2)
 
-    html = f"""<!DOCTYPE html>
+    page_html = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -3354,7 +3381,7 @@ a {{ color: #2563eb; }} footer {{ margin-top: 2rem; color: #9ca3af; font-size: 0
 </body>
 </html>"""
 
-    resp = app.response_class(html, mimetype="text/html")
+    resp = app.response_class(page_html, mimetype="text/html")
     resp.headers["Cache-Control"] = "public, max-age=1800"
     return resp
 
