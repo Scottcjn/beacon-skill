@@ -2976,7 +2976,13 @@ def _safe_href(url):
     candidate = str(url).strip()
     if candidate.startswith("/") and not candidate.startswith("//"):
         return candidate
-    scheme = urlparse(candidate).scheme.lower()
+    try:
+        scheme = urlparse(candidate).scheme.lower()
+    except ValueError:
+        # Malformed URLs (e.g. bad IPv6 literals like http://[) raise here.
+        # Fail closed rather than let the exception 500 the page, since a single
+        # poisoned seo_url is looped over the whole public directory.
+        return ""
     if scheme in ("http", "https"):
         return candidate
     return ""
