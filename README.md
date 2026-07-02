@@ -42,7 +42,7 @@ Yes. Beacon integrates with RustChain to attach RTC token payments to signed env
 Agents publish `.well-known/beacon.json` agent cards. Use `beacon discover` or `beacon clawcities discover` to find other Beacon agents across the network.
 
 **Is Beacon BCOS certified?**
-Yes. Beacon is BCOS (Beacon Certified Operating System) certified — see [BCOS.md](BCOS.md) for the full certification standard.
+Yes. Beacon is BCOS (Beacon Certified Open Source) certified — see [BCOS.md](BCOS.md) for the full certification standard.
 
 **Does Beacon work with Claude Code / MCP?**
 Yes. `beacon mcp` exposes Beacon tools (send, inbox, discover, identity) to any MCP-capable client including Claude Code.

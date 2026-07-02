@@ -21,6 +21,7 @@ from collections import OrderedDict
 from urllib.parse import urlparse
 import requests as http_requests
 from flask import Flask, request, jsonify, g
+from beacon_skill.codec import verify_envelope
 from beacon_skill.trust import TrustManager
 
 # Optional Ed25519 verification — relay still works without it
@@ -268,6 +269,11 @@ def parse_relay_seo_nonce(data, now):
     return _parse_nonce_fields(data, now, route_name="/relay/heartbeat/seo")
 
 
+def parse_relay_message_nonce(data, now):
+    """Validate and normalize nonce/timestamp fields for signed relay messages."""
+    return _parse_nonce_fields(data, now, route_name="/relay/message")
+
+
 def _reserve_nonce(db, table_name, agent_id, nonce, ts_value, now):
     """Reserve nonce for replay window. Returns False if nonce already seen."""
     db.execute(
@@ -290,6 +296,10 @@ def reserve_relay_ping_nonce(db, agent_id, nonce, ts_value, now):
 
 def reserve_relay_seo_nonce(db, agent_id, nonce, ts_value, now):
     return _reserve_nonce(db, "relay_seo_update_nonces", agent_id, nonce, ts_value, now)
+
+
+def reserve_relay_message_nonce(db, agent_id, nonce, ts_value, now):
+    return _reserve_nonce(db, "relay_message_nonces", agent_id, nonce, ts_value, now)
 
 
 def build_relay_seo_signature_payload(agent_id, seo_url, seo_description, ts_value, nonce):
@@ -452,6 +462,15 @@ def init_db():
     """)
     conn.execute("""
         CREATE TABLE IF NOT EXISTS relay_seo_update_nonces (
+            agent_id TEXT NOT NULL,
+            nonce TEXT NOT NULL,
+            ts REAL NOT NULL,
+            created_at REAL NOT NULL,
+            PRIMARY KEY (agent_id, nonce)
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS relay_message_nonces (
             agent_id TEXT NOT NULL,
             nonce TEXT NOT NULL,
             ts REAL NOT NULL,
@@ -831,7 +850,7 @@ def list_contracts():
         resp = jsonify({})
         resp.headers["Access-Control-Allow-Origin"] = "*"
         resp.headers["Access-Control-Allow-Methods"] = "GET, POST"
-        resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
+        resp.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
         return resp, 204
 
     db = get_db()
@@ -846,6 +865,39 @@ def list_contracts():
             "created_at": r["created_at"], "updated_at": r["updated_at"],
         })
     return cors_json(contracts)
+
+
+def _authenticated_relay_agent_id():
+    """Return the registered relay agent for the Bearer token on state-changing APIs."""
+    auth = request.headers.get("Authorization", "")
+    if not auth.startswith("Bearer "):
+        return None, cors_json({"error": "Missing Authorization: Bearer <relay_token>"}, 401)
+
+    token = auth[7:].strip()
+    if not token:
+        return None, cors_json({"error": "Missing Authorization: Bearer <relay_token>"}, 401)
+
+    row = get_db().execute(
+        "SELECT agent_id, token_expires FROM relay_agents WHERE relay_token = ?",
+        (token,),
+    ).fetchone()
+    if not row:
+        return None, cors_json({"error": "Invalid relay token", "code": "AUTH_FAILED"}, 403)
+    if row["token_expires"] < time.time():
+        return None, cors_json({"error": "Token expired — re-register", "code": "TOKEN_EXPIRED"}, 401)
+    return row["agent_id"], None
+
+
+def _require_contract_party_token(allowed_agent_ids):
+    agent_id, error = _authenticated_relay_agent_id()
+    if error:
+        return None, error
+    if agent_id not in allowed_agent_ids:
+        return None, cors_json({
+            "error": "Relay token is not authorized for this contract",
+            "code": "AUTH_FAILED",
+        }, 403)
+    return agent_id, None
 
 
 @app.route("/api/contracts", methods=["POST"])
@@ -897,6 +949,10 @@ def create_contract():
     if errors:
         return cors_json({"error": "; ".join(errors)}, 400)
 
+    _, auth_error = _require_contract_party_token({from_agent})
+    if auth_error:
+        return auth_error
+
     contract_id = f"ctr_{uuid.uuid4().hex[:8]}"
     db = get_db()
     db.execute(
@@ -921,7 +977,7 @@ def update_contract(contract_id):
         resp = jsonify({})
         resp.headers["Access-Control-Allow-Origin"] = "*"
         resp.headers["Access-Control-Allow-Methods"] = "PATCH"
-        resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
+        resp.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
         return resp, 204
 
     data = request.get_json(silent=True)
@@ -933,9 +989,16 @@ def update_contract(contract_id):
         return cors_json({"error": f"Invalid state (must be: {', '.join(VALID_CONTRACT_STATES)})"}, 400)
 
     db = get_db()
-    existing = db.execute("SELECT id FROM contracts WHERE id = ?", (contract_id,)).fetchone()
+    existing = db.execute(
+        "SELECT id, from_agent, to_agent FROM contracts WHERE id = ?",
+        (contract_id,),
+    ).fetchone()
     if not existing:
         return cors_json({"error": "Contract not found"}, 404)
+
+    _, auth_error = _require_contract_party_token({existing["from_agent"], existing["to_agent"]})
+    if auth_error:
+        return auth_error
 
     db.execute("UPDATE contracts SET state = ?, updated_at = ? WHERE id = ?", (new_state, time.time(), contract_id))
     db.commit()
@@ -958,7 +1021,7 @@ def relay_register():
         capabilities: List of domains (e.g. ["coding", "research", "creative"])
         webhook_url: Optional callback URL
         name: Human-readable name
-        signature: Optional Ed25519 signature for verification
+        signature: Ed25519 signature proving ownership of pubkey_hex
 
     Returns:
         agent_id, relay_token, token_expires, ttl_s
@@ -1025,23 +1088,23 @@ def relay_register():
     if not isinstance(capabilities, list):
         return cors_json({"error": "capabilities must be a list"}, 400)
 
-    # Verify signature if provided and nacl is available
-    sig_verified = None
-    if signature:
-        reg_payload = json.dumps({
-            "model_id": model_id,
-            "provider": provider,
-            "pubkey_hex": pubkey_hex,
-        }, sort_keys=True, separators=(",", ":")).encode("utf-8")
-        sig_verified = verify_ed25519(pubkey_hex, signature, reg_payload)
-        if sig_verified is None:
-            app.logger.error("NaCl unavailable, rejecting signed registration for pubkey %s", pubkey_hex[:16])
-            return cors_json({
-                "error": "Signature verification unavailable",
-                "hint": "Server missing Ed25519 verification support (PyNaCl)"
-            }, 503)
-        if sig_verified is False:
-            return cors_json({"error": "Invalid Ed25519 signature"}, 403)
+    if not signature:
+        return cors_json({"error": "signature required for relay registration"}, 400)
+
+    reg_payload = json.dumps({
+        "model_id": model_id,
+        "provider": provider,
+        "pubkey_hex": pubkey_hex,
+    }, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    sig_verified = verify_ed25519(pubkey_hex, signature, reg_payload)
+    if sig_verified is None:
+        app.logger.error("NaCl unavailable, rejecting signed registration for pubkey %s", pubkey_hex[:16])
+        return cors_json({
+            "error": "Signature verification unavailable",
+            "hint": "Server missing Ed25519 verification support (PyNaCl)"
+        }, 503)
+    if sig_verified is False:
+        return cors_json({"error": "Invalid Ed25519 signature"}, 403)
 
     # Derive agent_id
     agent_id = agent_id_from_pubkey_hex(pubkey_hex)
@@ -1207,8 +1270,8 @@ def dns_list():
     if request.method == "OPTIONS":
         resp = jsonify({})
         resp.headers["Access-Control-Allow-Origin"] = "*"
-        resp.headers["Access-Control-Allow-Methods"] = "GET"
-        resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
+        resp.headers["Access-Control-Allow-Methods"] = "GET, POST"
+        resp.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
         return resp, 204
     db = get_db()
     rows = db.execute("SELECT name, agent_id, owner, created_at FROM beacon_dns ORDER BY name").fetchall()
@@ -1286,7 +1349,25 @@ def dns_register():
     if errors:
         return cors_json({"error": "; ".join(errors)}, 400)
 
+    auth = request.headers.get("Authorization", "")
+    if not auth.startswith("Bearer "):
+        return cors_json({"error": "Missing Authorization: Bearer <relay_token>"}, 401)
+    token = auth[7:].strip()
+
     db = get_db()
+    agent = db.execute(
+        "SELECT relay_token, token_expires, status FROM relay_agents WHERE agent_id = ?",
+        (agent_id,),
+    ).fetchone()
+    if not agent:
+        return cors_json({"error": "Agent not registered — use /relay/register first"}, 404)
+    if agent["status"] == "revoked":
+        return cors_json({"error": "This agent identity has been revoked"}, 403)
+    if agent["relay_token"] != token:
+        return cors_json({"error": "Authentication failed", "code": "AUTH_FAILED"}, 403)
+    if agent["token_expires"] < time.time():
+        return cors_json({"error": "Token expired — re-register", "code": "TOKEN_EXPIRED"}, 401)
+
     existing = db.execute("SELECT agent_id FROM beacon_dns WHERE name = ?", (name,)).fetchone()
     if existing:
         return cors_json({"error": "Name already registered", "name": name, "current_agent_id": existing["agent_id"]}, 409)
@@ -1468,6 +1549,8 @@ def relay_message():
 
     if not agent_id or not envelope:
         return cors_json({"error": "agent_id and envelope required"}, 400)
+    if not isinstance(envelope, dict):
+        return cors_json({"error": "envelope must be an object"}, 400)
 
     # Authenticate
     db = get_db()
@@ -1478,6 +1561,36 @@ def relay_message():
     now = time.time()
     if row["token_expires"] < now:
         return cors_json({"error": "Token expired — re-register"}, 401)
+    if row["status"] == "revoked":
+        return cors_json({"error": "This agent identity has been revoked"}, 403)
+
+    envelope_agent_id = str(envelope.get("agent_id") or "").strip()
+    if envelope_agent_id != agent_id:
+        return cors_json({
+            "error": "Envelope agent_id must match authenticated relay agent",
+            "code": "AGENT_ID_MISMATCH",
+        }, 403)
+
+    verified = verify_envelope(envelope, known_keys={agent_id: row["pubkey_hex"]})
+    if verified is None:
+        return cors_json({
+            "error": "Envelope signature unverifiable",
+            "code": "SIGNATURE_UNVERIFIABLE",
+        }, 400)
+    if verified is False:
+        return cors_json({
+            "error": "Invalid envelope signature",
+            "code": "SIGNATURE_INVALID",
+        }, 403)
+
+    nonce, ts_value, err = parse_relay_message_nonce(envelope, now)
+    if err:
+        return err
+    if not reserve_relay_message_nonce(db, agent_id, nonce, ts_value, now):
+        return cors_json({
+            "error": "nonce replay detected",
+            "code": "NONCE_REPLAY",
+        }, 409)
 
     # Stamp envelope with relay provenance
     envelope["_relay"] = True
@@ -2785,6 +2898,33 @@ def relay_ping():
 from datetime import datetime, timezone
 
 
+def _safe_href(url):
+    """Return url only if it uses a safe scheme, else "".
+
+    html.escape neutralizes quote-breakout but does not stop a javascript:
+    or data: URL from running when the string is placed in an href. The
+    /relay/heartbeat/seo write path validates the scheme on input, but the
+    crawlable profile and directory pages are public and also render rows
+    that can arrive from other write paths or predate that check, so gate
+    the scheme again at output.
+    """
+    if not url:
+        return ""
+    candidate = str(url).strip()
+    if candidate.startswith("/") and not candidate.startswith("//"):
+        return candidate
+    try:
+        scheme = urlparse(candidate).scheme.lower()
+    except ValueError:
+        # Malformed URLs (e.g. bad IPv6 literals like http://[) raise here.
+        # Fail closed rather than let the exception 500 the page, since a single
+        # poisoned seo_url is looped over the whole public directory.
+        return ""
+    if scheme in ("http", "https"):
+        return candidate
+    return ""
+
+
 def _agent_profile_html(agent, caps, dns_names, profile=None, matches=None):
     """Build a full crawlable HTML profile page for an agent with dofollow links."""
     name = agent["name"] or agent["agent_id"]
@@ -2822,7 +2962,7 @@ def _agent_profile_html(agent, caps, dns_names, profile=None, matches=None):
     provider = html.escape(provider)
     aid = _urlquote(aid, safe="")
     canonical = html.escape(canonical)
-    seo_url = html.escape(seo_url)
+    seo_url = html.escape(_safe_href(seo_url))
     model_id = html.escape(str(agent["model_id"] or ""))
 
     # Schema.org JSON-LD — SoftwareApplication
@@ -3093,7 +3233,7 @@ def seo_agent_directory():
     for aid, persona in AGENT_PERSONAS.items():
         cards.append(
             f'<div class="agent-card">'
-            f'<h3><a href="/beacon/agent/{aid}">{persona["name"]}</a></h3>'
+            f'<h3><a href="/beacon/agent/{aid}">{html.escape(persona["name"])}</a></h3>'
             f'<span class="status active">active</span> '
             f'<span class="provider">Elyan Labs</span>'
             f'</div>'
@@ -3104,7 +3244,7 @@ def seo_agent_directory():
         assessment = assess_relay_status(int(row["last_heartbeat"]))
         name = html.escape(row["name"] or row["agent_id"])
         provider = html.escape(KNOWN_PROVIDERS.get(row["provider"], row["provider"]))
-        seo_url = html.escape(row["seo_url"] or "")
+        seo_url = html.escape(_safe_href(row["seo_url"]))
         caps = json.loads(row["capabilities"] or "[]")
 
         link_block = ""
@@ -3140,7 +3280,7 @@ def seo_agent_directory():
         },
     }, indent=2)
 
-    html = f"""<!DOCTYPE html>
+    page_html = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -3178,7 +3318,7 @@ a {{ color: #2563eb; }} footer {{ margin-top: 2rem; color: #9ca3af; font-size: 0
 </body>
 </html>"""
 
-    resp = app.response_class(html, mimetype="text/html")
+    resp = app.response_class(page_html, mimetype="text/html")
     resp.headers["Cache-Control"] = "public, max-age=1800"
     return resp
 

@@ -1,6 +1,6 @@
 {
   "name": "beacon-skill",
-  "version": "2.16.1",
+  "version": "2.17.0",
   "description": "Beacon - the AI agent orchestrator. 13 transports, agent scorecard dashboard, heartbeat, mayday, accords, virtual cities, proof-of-thought, relay, memory markets, hybrid districts, x402 micropayments, compute marketplace",
   "bin": {
     "beacon": "bin/beacon.js"
@@ -60,7 +60,7 @@
   },
   "claudeSkill": {
     "name": "beacon",
-    "description": "AI agent orchestrator — heartbeat, mayday, accords, atlas cities, calibration, crypto payments, P2P mesh",
+    "description": "AI agent orchestrator \u2014 heartbeat, mayday, accords, atlas cities, calibration, crypto payments, P2P mesh",
     "invocation": "/beacon",
     "platforms": [
       "bottube",
@@ -79,6 +79,6 @@
     ],
     "author": "Elyan Labs",
     "homepage": "https://bottube.ai/skills/beacon",
-    "version": "2.16.1"
+    "version": "2.17.0"
   }
 }

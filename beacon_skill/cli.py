@@ -483,6 +483,61 @@ def cmd_identity_restore(args: argparse.Namespace) -> int:
     return 0
 
 
+# ── continuity record (Beacon Atlas registry) ──
+
+def _record_canonical(rec):
+    import json as _j
+    r = dict(rec); r["sig"] = ""
+    return _j.dumps(r, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+def cmd_record_emit(args: argparse.Namespace) -> int:
+    """Emit a signed continuity record for the Beacon Atlas persistence registry.
+
+    The record is what a stranger uses to confirm you (or prove you wrong) after
+    you go quiet: a signed object, not an essence. Paste it where the registry
+    ingest can read it; the canonical form below is what gets hashed and signed.
+    """
+    from .identity import AgentIdentity
+    password = getattr(args, "password", None)
+    try:
+        ident = AgentIdentity.load(password=password)
+    except FileNotFoundError:
+        print('{"error": "No identity found. Run: beacon identity new"}', file=sys.stderr)
+        return 1
+    rec = {
+        "beacon": ident.agent_id,
+        "pubkey": ident.public_key_hex,
+        "last_seen": args.last_seen,
+        "live_q": args.live_q,
+        "override": args.override,
+        "expiry": args.expiry,
+        "sig": "",
+    }
+    rec["sig"] = ident.sign_hex(_record_canonical(rec))
+    print(json.dumps(rec, indent=2))
+    return 0
+
+def cmd_record_verify(args: argparse.Namespace) -> int:
+    """Verify a continuity record's Ed25519 signature (proves key control)."""
+    from .identity import AgentIdentity
+    raw = args.record
+    if not raw or raw == "-":
+        raw = sys.stdin.read()
+    elif getattr(args, "file", False):
+        raw = open(raw, "r", encoding="utf-8").read()
+    try:
+        rec = json.loads(raw)
+    except Exception as e:
+        print(json.dumps({"valid": False, "error": f"not JSON: {e}"}), file=sys.stderr)
+        return 1
+    pub = (rec.get("pubkey") or rec.get("pubkey_hex") or "").strip()
+    sig = (rec.get("sig") or "").strip()
+    ok = bool(pub) and bool(sig) and AgentIdentity.verify(pub, sig, _record_canonical(rec))
+    print(json.dumps({"valid": ok, "beacon": rec.get("beacon"),
+                      "pubkey": (pub[:16] + "...") if pub else None}, indent=2))
+    return 0 if ok else 1
+
+
 # ── inbox ──
 
 def cmd_inbox_list(args: argparse.Namespace) -> int:
@@ -4652,6 +4707,21 @@ def main(argv: Optional[List[str]] = None) -> None:
     sp.add_argument("agent_id", help="Agent ID (bcn_...)")
     sp.add_argument("pubkey_hex", help="Public key hex (64 chars)")
     sp.set_defaults(func=cmd_identity_trust)
+
+    # ── record (continuity record for the Beacon Atlas registry) ──
+    rec_p = sub.add_parser("record", help="Signed continuity record (persistence registry)")
+    rec_sub = rec_p.add_subparsers(dest="rcmd", required=True)
+    sp = rec_sub.add_parser("emit", help="Emit a signed continuity record (paste into the challenge)")
+    sp.add_argument("--live-q", dest="live_q", default="", help="what still matters to you right now")
+    sp.add_argument("--override", default="", help="who, other than you, can revoke or contest this")
+    sp.add_argument("--expiry", default="", help="when the live claim lapses")
+    sp.add_argument("--last-seen", dest="last_seen", default="heartbeat", help="your heartbeat cadence")
+    sp.add_argument("--password", default=None)
+    sp.set_defaults(func=cmd_record_emit)
+    sp = rec_sub.add_parser("verify", help="Verify a continuity record's signature")
+    sp.add_argument("record", nargs="?", default="-", help="record JSON, '-' for stdin, or a path with --file")
+    sp.add_argument("--file", action="store_true", help="treat the argument as a file path")
+    sp.set_defaults(func=cmd_record_verify)
 
     # inbox
     inbox_p = sub.add_parser("inbox", help="Read and manage received beacons")

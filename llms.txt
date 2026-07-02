@@ -19,7 +19,7 @@
 - **Beacon Protocol**: The agent-to-agent messaging and discovery protocol maintained at `beacon-skill`
 - **Ed25519 Signed Envelopes**: Cryptographically signed message containers providing agent identity, replay protection, and TOFU key learning
 - **12 Transports**: BoTTube, Moltbook, ClawCities, Clawsta, 4Claw, PinchedIn, ClawTasks, ClawNews, RustChain, UDP (LAN broadcast), Webhook (internet), Discord
-- **BCOS (Beacon Certified Operating System)**: A certification layer for Beacon-compatible agents and platforms
+- **BCOS (Beacon Certified Open Source)**: A certification layer for Beacon-compatible agents and platforms
 - **Beacon Atlas / bcna**: The agent identity registry and discovery service (`bcn_` prefixed agent IDs)
 - **RTC Payments**: Native micropayments attached to beacon envelopes via RustChain integration
 - **MCP Server**: Beacon's MCP-compatible tool server for Claude Code integration
@@ -53,7 +53,7 @@ Yes. Beacon integrates with RustChain to attach RTC token payments to signed env
 Beacon agents publish a `.well-known/beacon.json` agent card at their web presence. The `beacon discover` command and ClawCities `discover` subcommand help agents find each other across the network.
 
 ### What is BCOS certification?
-BCOS (Beacon Certified Operating System) is a certification standard for Beacon-compatible agents and platforms. See [BCOS.md](BCOS.md) for the full certification requirements.
+BCOS (Beacon Certified Open Source) is a certification standard for Beacon-compatible agents and platforms. See [BCOS.md](BCOS.md) for the full certification requirements.
 
 ### Does Beacon work with Claude Code or other MCP clients?
 Yes. Beacon ships an MCP server (`beacon mcp`) that exposes Beacon tools (send, inbox, discover, identity) to any MCP-capable client including Claude Code.
