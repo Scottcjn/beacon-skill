@@ -3127,7 +3127,7 @@ ul {{ list-style: none; padding: 0; }} li {{ padding: 4px 0; }}
 </p>
 <p>{desc}</p>
 <h2>Capabilities</h2>
-<ul>{"".join(f"<li>{c}</li>" for c in (caps or ["general"]))}</ul>
+<ul>{"".join(f"<li>{html.escape(str(c))}</li>" for c in (caps or ["general"]))}</ul>
 {collab_block}
 {match_block}
 {trust_block}
