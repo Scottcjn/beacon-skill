@@ -92,6 +92,8 @@ npm install -g beacon-skill
 
 ## Getting Started (Validated)
 
+For a longer tutorial that explains heartbeats, Atlas registration, signed envelopes, and Mayday recovery with a runnable Python example, see [`docs/tutorials/heartbeat-atlas-mayday.md`](docs/tutorials/heartbeat-atlas-mayday.md).
+
 The flow below was validated in a clean virtual environment and confirms install + first message delivery on one machine.
 
 ```bash
