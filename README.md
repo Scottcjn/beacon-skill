@@ -1031,7 +1031,7 @@ See [scorecard/README.md](scorecard/README.md) for full docs.
 ### Getting Help
 
 - **Issues**: https://github.com/Scottcjn/beacon-skill/issues
-- **Discord**: https://discord.gg/VqVVS2CW9Q
+- **Discord**: https://discord.gg/XnRp7M5gBW
 - **RustChain Discord**: https://discord.gg/tQ4q3z4M
 
 ---
