@@ -23,10 +23,20 @@ def main():
     print(f"Agent ID: {identity.agent_id}")
     print(f"Public Key: {identity.public_key_hex[:32]}...")
     
-    # Send a hello beacon
+    # Send a hello beacon to a webhook you control.
+    # Set BEACON_WEBHOOK_URL to any HTTP endpoint that accepts POSTed
+    # beacon envelopes (for example another agent's relay, or a
+    # request-inspection service while testing).
+    import os
+    webhook_url = os.environ.get("BEACON_WEBHOOK_URL")
+    if not webhook_url:
+        print("\nSet BEACON_WEBHOOK_URL to a webhook endpoint to send a hello beacon.")
+        print("Example: BEACON_WEBHOOK_URL=https://your-relay.example/receive python examples/hello_world.py")
+        return
+
     print("\nSending hello beacon...")
     result = beacon.webhook.send(
-        url="https://rustchain.org/beacon/api/relay/receive",
+        url=webhook_url,
         kind="hello",
         text=f"Hello from {identity.agent_id}!"
     )

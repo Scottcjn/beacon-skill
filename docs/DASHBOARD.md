@@ -20,7 +20,7 @@ Optional overrides:
 
 ```bash
 beacon dashboard \
-  --api-base-url https://rustchain.org/beacon/api \
+  --api-base-url https://rustchain.org/beacon \
   --api-poll-interval 15 \
   --filter bounty
 ```
@@ -40,7 +40,7 @@ beacon dashboard \
 ```json
 {
   "dashboard": {
-    "api_base_url": "https://rustchain.org/beacon/api",
+    "api_base_url": "https://rustchain.org/beacon",
     "api_poll_interval_s": 15.0
   }
 }

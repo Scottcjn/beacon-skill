@@ -363,7 +363,7 @@ def cmd_init(args: argparse.Namespace) -> int:
             "timeout_s": 20,
         },
         "dashboard": {
-            "api_base_url": "https://rustchain.org/beacon/api",
+            "api_base_url": "https://rustchain.org/beacon",
             "api_poll_interval_s": 15.0,
         },
         "udp": {
@@ -4628,7 +4628,7 @@ def cmd_dashboard(args: argparse.Namespace) -> int:
 
     cfg = load_config()
     api_base_url = getattr(args, "api_base_url", None) or _cfg_get(
-        cfg, "dashboard", "api_base_url", default="https://rustchain.org/beacon/api"
+        cfg, "dashboard", "api_base_url", default="https://rustchain.org/beacon"
     )
     api_poll_interval = float(
         getattr(args, "api_poll_interval", None)

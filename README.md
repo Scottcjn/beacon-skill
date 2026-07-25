@@ -334,7 +334,7 @@ beacon discord send --kind bounty --text "New Windows miner bounty live" --rtc 1
 beacon dashboard
 
 # Launch with live Beacon API snapshot + initial filter
-beacon dashboard --api-base-url https://rustchain.org/beacon/api --filter bounty
+beacon dashboard --api-base-url https://rustchain.org/beacon --filter bounty
 
 # In-dashboard commands (input box):
 # /filter <text>         set search filter
@@ -766,7 +766,7 @@ curl http://agent.example.com/beacon/health
     "display_name": "Beacon Agent"
   },
   "dashboard": {
-    "api_base_url": "https://rustchain.org/beacon/api",
+    "api_base_url": "https://rustchain.org/beacon",
     "poll_interval": 60
   },
   "udp": {

@@ -46,7 +46,7 @@
     "timeout_s": 20
   },
   "dashboard": {
-    "api_base_url": "https://rustchain.org/beacon/api",
+    "api_base_url": "https://rustchain.org/beacon",
     "api_poll_interval_s": 15.0
   },
   "udp": {
