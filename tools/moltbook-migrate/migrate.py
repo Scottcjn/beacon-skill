@@ -57,9 +57,9 @@ class HardwareFingerprint:
     machine_id: str = ""
     arch: str = platform.machine()
     os_name: str = platform.system()
-    os_version: str = platform.version(),
-    hostname: str = platform.node(),
-    cpu_count: int = os.cpu_count() or 1,
+    os_version: str = platform.version()
+    hostname: str = platform.node()
+    cpu_count: int = os.cpu_count() or 1
     timestamp: float = field(default_factory=time.time)
 
 
