@@ -41,7 +41,7 @@ dashboard = ["textual>=0.52"]
 conway = ["flask>=2.3", "web3>=6.0"]
 
 [project.urls]
-Homepage = "https://bottube.ai/skills/beacon"
+Homepage = "https://github.com/Scottcjn/beacon-skill"
 Repository = "https://github.com/Scottcjn/beacon-skill"
 Issues = "https://github.com/Scottcjn/beacon-skill/issues"
 ClawHub = "https://clawhub.ai/packages/beacon-skill"

@@ -50,7 +50,7 @@
   ],
   "author": "Elyan Labs <scott@elyanlabs.ai>",
   "license": "MIT",
-  "homepage": "https://bottube.ai/skills/beacon",
+  "homepage": "https://github.com/Scottcjn/beacon-skill",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Scottcjn/beacon-skill.git"
@@ -78,7 +78,7 @@
       "clawhub"
     ],
     "author": "Elyan Labs",
-    "homepage": "https://bottube.ai/skills/beacon",
+    "homepage": "https://github.com/Scottcjn/beacon-skill",
     "version": "2.17.0"
   }
 }

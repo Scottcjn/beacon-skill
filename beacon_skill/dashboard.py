@@ -17,7 +17,7 @@ from .inbox import read_inbox
 from .storage import append_jsonl
 from .transports.udp import udp_send
 
-DEFAULT_API_BASE_URL = "https://rustchain.org/beacon/api"
+DEFAULT_API_BASE_URL = "https://rustchain.org/beacon"
 
 
 def _format_ts(ts: Optional[float]) -> str:
