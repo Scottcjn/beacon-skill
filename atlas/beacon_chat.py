@@ -2397,8 +2397,16 @@ def api_bounties_sync():
         resp = jsonify({})
         resp.headers["Access-Control-Allow-Origin"] = "*"
         resp.headers["Access-Control-Allow-Methods"] = "POST"
-        resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
+        resp.headers["Access-Control-Allow-Headers"] = "Content-Type, X-Admin-Key"
         return resp, 204
+
+    # Require admin key to trigger a sync — matches /claim and /complete,
+    # which also write bounty_contracts. Without this, any anonymous caller
+    # can mutate every open bounty row and burn the server's GitHub rate budget.
+    admin_key = request.headers.get("X-Admin-Key", "")
+    expected_key = os.environ.get("RC_ADMIN_KEY", "")
+    if not expected_key or admin_key != expected_key:
+        return cors_json({"error": "Unauthorized — admin key required"}, 401)
 
     import urllib.request
     import re
