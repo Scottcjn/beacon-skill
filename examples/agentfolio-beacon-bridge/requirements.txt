@@ -1,0 +1,4 @@
+requests>=2.28
+cryptography>=41.0
+# beacon-skill itself provides beacon_skill.identity (Ed25519 primitives).
+# Install the repo (pip install -e .) so `import beacon_skill` resolves.
