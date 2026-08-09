@@ -1107,3 +1107,9 @@ When retrying failed deliveries:
 - Duplicate nonces within the cache window return the cached response
 
 See [docs/SECURITY.md](docs/SECURITY.md) for complete security patterns.
+
+---
+
+## Elyan Labs
+
+This project is part of the [Elyan Labs](https://elyanlabs.ai) ecosystem — building autonomous agent infrastructure on RustChain. Elyan Labs develops agent-native tools for discovery, coordination, and commerce.
