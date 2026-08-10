@@ -179,6 +179,31 @@ def main():
         print(f"    Beats:  {p['beat_count']}")
     print()
 
+    # ── Step 9: Webhook Communication ──
+    print("=" * 50)
+    print("Step 9: Send a Webhook Message")
+    print("=" * 50)
+
+    from beacon_skill.transports import webhook
+    print("Sending a 'bounty' claim message to a local receiver...")
+    try:
+        # Construct a simple envelope
+        envelope = {
+            "kind": "bounty",
+            "text": "AI Agent bounty claimed!",
+            "agent_id": identity.agent_id,
+        }
+        # Use the correct function name: webhook_send
+        webhook.webhook_send(
+            url="http://127.0.0.1:8402/beacon/inbox",
+            envelope=envelope,
+            identity=identity,
+        )
+        print("  Message sent successfully!")
+    except Exception as e:
+        print(f"  Note: Webhook send failed (expected if no receiver is running): {e}")
+    print()
+
     # ── Summary ──
     print("=" * 50)
     print("Done! Your agent is set up with:")
