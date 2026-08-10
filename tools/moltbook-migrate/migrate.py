@@ -103,14 +103,14 @@ class MigrationResult:
 # ─── Moltbook Scraper ─────────────────────────────────────────────────────
 def scrape_moltbook_profile(username: str) -> MoltbookProfile:
     """Scrape public profile metadata from Moltbook.
-    
+
     Uses OpenGraph meta tags and HTML scraping since Moltbook's
     API v1 endpoints are deprecated post-acquisition.
     """
     # Normalize username (strip @ if present)
     clean_name = username.lstrip("@")
     profile_url = f"{MOLTBOOK_BASE_URL}/u/{clean_name}"
-    
+
     try:
         req = Request(profile_url, headers={"User-Agent": "BeaconMigrate/1.0"})
         with urlopen(req, timeout=15) as resp:
@@ -121,19 +121,19 @@ def scrape_moltbook_profile(username: str) -> MoltbookProfile:
         raise RuntimeError(f"Moltbook returned HTTP {e.code}")
     except URLError as e:
         raise RuntimeError(f"Cannot reach Moltbook: {e.reason}")
-    
+
     # Extract OpenGraph metadata
     profile = MoltbookProfile(
         username=clean_name,
         source_url=profile_url,
     )
-    
-    # Parse OG tags (simple regex — no BeautifulSoup dependency)
+
+    # Parse OG tags (simple regex - no BeautifulSoup dependency)
     import re
     og_tags = dict(re.findall(
         r'<meta\s+property="og:(\w+)"\s+content="([^"]*)"', html
     ))
-    
+
     profile.display_name = (
         og_tags.get("title", clean_name)
         .replace(" - moltbook", "")
@@ -141,32 +141,32 @@ def scrape_moltbook_profile(username: str) -> MoltbookProfile:
     )
     profile.bio = og_tags.get("description", "")
     profile.avatar_url = og_tags.get("image", "")
-    
+
     # Try to extract karma/followers from page content
     karma_match = re.search(r'(\d[\d,]*)\s*karma', html, re.IGNORECASE)
     if karma_match:
         profile.karma = int(karma_match.group(1).replace(",", ""))
-    
+
     follower_match = re.search(r'(\d[\d,]*)\s*follow', html, re.IGNORECASE)
     if follower_match:
         profile.follower_count = int(follower_match.group(1).replace(",", ""))
-    
+
     post_match = re.search(r'(\d[\d,]*)\s*post', html, re.IGNORECASE)
     if post_match:
         profile.post_count = int(post_match.group(1).replace(",", ""))
-    
+
     return profile
 
 
 # ─── Hardware Fingerprint ─────────────────────────────────────────────────
 def generate_hardware_fingerprint() -> HardwareFingerprint:
     """Generate a hardware fingerprint for the current machine.
-    
+
     Uses platform info + hashed system identifiers to create
     a stable, privacy-preserving machine ID.
     """
     fp = HardwareFingerprint()
-    
+
     # Collect stable identifiers
     components = [
         platform.node(),
@@ -174,7 +174,7 @@ def generate_hardware_fingerprint() -> HardwareFingerprint:
         platform.system(),
         str(os.cpu_count()),
     ]
-    
+
     # Add macOS-specific hardware UUID if available
     if platform.system() == "Darwin":
         try:
@@ -189,7 +189,7 @@ def generate_hardware_fingerprint() -> HardwareFingerprint:
                     break
         except (subprocess.TimeoutExpired, FileNotFoundError):
             pass
-    
+
     # Add Linux machine-id if available
     elif platform.system() == "Linux":
         try:
@@ -197,11 +197,11 @@ def generate_hardware_fingerprint() -> HardwareFingerprint:
             components.append(machine_id)
         except FileNotFoundError:
             pass
-    
+
     # Generate stable hash
     combined = "|".join(components)
     fp.machine_id = hashlib.sha256(combined.encode()).hexdigest()[:16]
-    
+
     return fp
 
 
@@ -213,7 +213,7 @@ def register_beacon(
     is_human: bool = False,
 ) -> BeaconRegistration:
     """Register a new Beacon ID using beacon-skill CLI.
-    
+
     If beacon-skill is not installed, generates a local Beacon ID
     with hardware anchoring.
     """
@@ -222,7 +222,7 @@ def register_beacon(
         display_name=display_name,
         is_human=is_human,
     )
-    
+
     # Try using beacon-skill CLI
     try:
         result = subprocess.run(
@@ -240,16 +240,16 @@ def register_beacon(
             f"{agent_name}:{hardware_fp.machine_id}".encode()
         ).hexdigest()[:8]
         reg.beacon_id = f"bcn_{agent_name[:8]}_{name_hash}"
-    
+
     if not reg.beacon_id:
         name_hash = hashlib.sha256(
             f"{agent_name}:{hardware_fp.machine_id}".encode()
         ).hexdigest()[:8]
         reg.beacon_id = f"bcn_{agent_name[:8]}_{name_hash}"
-    
+
     reg.networks = ["RustChain"]
     reg.registered = True
-    
+
     return reg
 
 
@@ -259,12 +259,12 @@ def link_agentfolio(
     display_name: str,
 ) -> AgentFolioLink:
     """Link to an AgentFolio SATP trust profile.
-    
+
     Searches existing agents by name, or creates a new profile
     linked to the Beacon ID.
     """
     link = AgentFolioLink()
-    
+
     # Search existing agents
     try:
         req = Request(
@@ -273,10 +273,10 @@ def link_agentfolio(
         )
         with urlopen(req, timeout=15) as resp:
             data = json.loads(resp.read())
-        
+
         agents = data.get("agents", [])
         name_lower = display_name.lower()
-        
+
         for agent in agents:
             if agent.get("name", "").lower() == name_lower:
                 link.agent_id = agent.get("id", "")
@@ -288,8 +288,8 @@ def link_agentfolio(
                 link.linked = True
                 break
     except (HTTPError, URLError, json.JSONDecodeError):
-        pass  # AgentFolio may be unreachable — graceful degradation
-    
+        pass  # AgentFolio may be unreachable - graceful degradation
+
     if not link.linked:
         # Create a new entry reference (actual creation requires AgentFolio API key)
         link.name = display_name
@@ -298,7 +298,7 @@ def link_agentfolio(
         link.verification_level = 1
         link.verification_badge = "🟡"
         link.linked = True  # Reference link created
-    
+
     return link
 
 
@@ -307,13 +307,13 @@ def publish_provenance(
     result: MigrationResult,
 ) -> bool:
     """Publish the provenance linkage locally.
-    
+
     In a full implementation, this would publish to a distributed
     provenance registry. For now, stores locally and logs the
     cross-reference.
     """
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    
+
     # Load existing links
     links = []
     if PROVENANCE_FILE.exists():
@@ -321,7 +321,7 @@ def publish_provenance(
             links = json.loads(PROVENANCE_FILE.read_text())
         except (json.JSONDecodeError, FileNotFoundError):
             links = []
-    
+
     # Create provenance entry
     entry = {
         "beacon_id": result.beacon_registration.beacon_id if result.beacon_registration else None,
@@ -331,10 +331,10 @@ def publish_provenance(
         "linked_at": time.time(),
         "migration_status": result.status,
     }
-    
+
     links.append(entry)
     PROVENANCE_FILE.write_text(json.dumps(links, indent=2))
-    
+
     return True
 
 
@@ -345,7 +345,7 @@ def migrate(
     skip_agentfolio: bool = False,
 ) -> MigrationResult:
     """Execute the full Moltbook → Beacon + AgentFolio migration.
-    
+
     Steps:
     1. Scrape Moltbook profile
     2. Hardware-fingerprint current machine
@@ -354,7 +354,7 @@ def migrate(
     5. Publish provenance linkage
     """
     result = MigrationResult()
-    
+
     # Step 1: Scrape Moltbook
     print(f"📡 Step 1/5: Scraping Moltbook profile '@{username}'...")
     try:
@@ -365,13 +365,13 @@ def migrate(
     except Exception as e:
         result.errors.append(f"Moltbook scrape failed: {e}")
         print(f"   ⚠️  {e}")
-    
+
     # Step 2: Hardware fingerprint
     print("🔍 Step 2/5: Hardware-fingerprinting current machine...")
     result.hardware_fingerprint = generate_hardware_fingerprint()
     print(f"   ✅ Machine ID: {result.hardware_fingerprint.machine_id}")
     print(f"   Arch: {result.hardware_fingerprint.arch} / {result.hardware_fingerprint.os_name}")
-    
+
     # Step 3: Mint Beacon ID
     agent_name = username.lstrip("@").replace("_", "-")
     display_name = (
@@ -387,7 +387,7 @@ def migrate(
         is_human=is_human,
     )
     print(f"   ✅ Beacon ID: {result.beacon_registration.beacon_id}")
-    
+
     # Step 4: Link AgentFolio
     if not skip_agentfolio:
         print("🔗 Step 4/5: Linking to AgentFolio SATP trust profile...")
@@ -403,23 +403,23 @@ def migrate(
             print("   ⚠️  AgentFolio link failed (unreachable or not found)")
     else:
         print("⏭️  Step 4/5: AgentFolio linking skipped")
-    
+
     # Step 5: Publish provenance
     print("📜 Step 5/5: Publishing provenance linkage...")
     result.provenance_published = publish_provenance(result)
     if result.provenance_published:
         print(f"   ✅ Provenance saved to {PROVENANCE_FILE}")
-    
+
     # Finalize
     result.status = "completed" if not result.errors else "completed_with_errors"
     result.completed_at = time.time()
-    
+
     elapsed = result.completed_at - result.started_at
     print(f"\n✨ Migration complete in {elapsed:.1f}s!")
     print(f"   Beacon ID: {result.beacon_registration.beacon_id}")
     print(f"   Moltbook: @{result.moltbook_profile.username}" if result.moltbook_profile else "")
     print(f"   AgentFolio: {result.agentfolio_link.name}" if result.agentfolio_link else "")
-    
+
     return result
 
 
@@ -429,7 +429,8 @@ def main():
         description="Moltbook → Beacon + AgentFolio Migration Importer",
     )
     parser.add_argument(
-        "username",
+        "--from-moltbook",
+        required=True,
         help="Moltbook username (with or without @)",
     )
     parser.add_argument(
@@ -447,15 +448,21 @@ def main():
         action="store_true",
         help="Output result as JSON",
     )
-    
+    parser.add_argument(
+        "--timeout",
+        type=int,
+        default=15,
+        help="HTTP request timeout in seconds (default: 15)",
+    )
+
     args = parser.parse_args()
-    
+
     result = migrate(
-        username=args.username,
+        username=args.from_moltbook,
         is_human=args.human,
         skip_agentfolio=args.skip_agentfolio,
     )
-    
+
     if args.json:
         # Convert dataclasses to dicts for JSON serialization
         output = {
