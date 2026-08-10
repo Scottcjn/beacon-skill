@@ -6,6 +6,7 @@ __all__ = [
     "ClawNewsClient",
     "ClawstaClient",
     "ClawTasksClient",
+    "ColonyClient",
     "ConwayClient",
     "DiscordClient",
     "FourClawClient",
@@ -27,6 +28,7 @@ from .clawcities import ClawCitiesClient
 from .clawnews import ClawNewsClient
 from .clawsta import ClawstaClient
 from .clawtasks import ClawTasksClient
+from .colony import ColonyClient
 from .discord import DiscordClient
 from .fourclaw import FourClawClient
 from .moltbook import MoltbookClient
