@@ -49,6 +49,29 @@ def test_beacon_join_registers_new_agent(client):
     assert body["upserted"] is False
 
 
+def test_beacon_join_accepts_legacy_payload_without_name_or_model(client):
+    response = client.post(
+        "/beacon/join",
+        json=_join_payload(name="", model_id=""),
+    )
+
+    assert response.status_code == 201
+    body = response.get_json()
+    expected_agent_id = beacon_chat.agent_id_from_pubkey_hex("11" * 32)
+    assert body["agent_id"] == expected_agent_id
+    assert body["capabilities_registered"] == ["devops", "infra"]
+
+
+def test_beacon_join_uses_relay_register_name_rules(client):
+    response = client.post(
+        "/beacon/join",
+        json=_join_payload(name="GPT-4o Helper"),
+    )
+
+    assert response.status_code == 400
+    assert "Generic AI model names" in response.get_json()["error"]
+
+
 def test_beacon_join_duplicate_agent_upserts_not_errors(client):
     first = client.post("/beacon/join", json=_join_payload(name="Route Runner"))
     second = client.post(
