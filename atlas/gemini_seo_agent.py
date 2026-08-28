@@ -136,7 +136,9 @@ def _save_state(state: Dict):
 
 def register_on_relay():
     """Register the Gemini SEO agent on the Beacon relay."""
-    identity = AgentIdentity.from_mnemonic(f"gemini-seo-agent-{AGENT_NAME}")
+    # This production relay identity predates BIP39 mnemonic stretching and is
+    # intentionally pinned so a dependency update does not rotate its agent_id.
+    identity = AgentIdentity.from_legacy_mnemonic(f"gemini-seo-agent-{AGENT_NAME}")
     reg_payload = json.dumps({
         "model_id": GEMINI_MODEL,
         "provider": AGENT_PROVIDER,
@@ -178,7 +180,8 @@ def heartbeat():
     state = _load_state()
     token = state.get("relay_token")
     agent_id = state.get("agent_id")
-    identity = AgentIdentity.from_mnemonic(f"gemini-seo-agent-{AGENT_NAME}")
+    # Keep the same legacy relay identity used during registration.
+    identity = AgentIdentity.from_legacy_mnemonic(f"gemini-seo-agent-{AGENT_NAME}")
 
     if not token or not agent_id:
         print("Not registered. Run: gemini_seo_agent.py register")

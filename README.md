@@ -166,12 +166,22 @@ beacon identity new --mnemonic
 # Password-protect your keystore
 beacon identity new --password
 
-# Restore from seed phrase
+# Restore a modern BIP39 seed phrase
 beacon identity restore "word1 word2 word3 ... word24"
+
+# Restore a pre-BIP39 Beacon mnemonic without rotating the old agent_id
+beacon identity restore --legacy "word1 word2 word3 ... word24"
+
+# If you know the expected agent_id, make restore refuse the wrong derivation
+beacon identity restore --expect-agent-id bcn_a1b2c3d4e5f6 "word1 word2 word3 ... word24"
 
 # Trust another agent's public key
 beacon identity trust bcn_a1b2c3d4e5f6 <pubkey_hex>
 ```
+
+Mnemonic restores now default to BIP39 PBKDF2-HMAC-SHA512. Existing identities
+created by older Beacon releases used a raw-SHA256 derivation; restore them with
+`--legacy` (or `--expect-agent-id`) so the recovered `agent_id` does not change.
 
 Agent IDs use the format `bcn_` + first 12 hex of SHA256(pubkey) = 16 chars total.
 

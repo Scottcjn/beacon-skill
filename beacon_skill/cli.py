@@ -472,12 +472,71 @@ def cmd_identity_restore(args: argparse.Namespace) -> int:
     from .identity import AgentIdentity
     phrase = args.mnemonic_phrase
     password = getattr(args, "password", None)
-    ident = AgentIdentity.from_mnemonic(phrase)
+    legacy = bool(getattr(args, "legacy", False))
+    expected_agent_id = (getattr(args, "expect_agent_id", None) or "").strip()
+
+    modern_ident = AgentIdentity.from_mnemonic(phrase)
+    legacy_ident = AgentIdentity.from_legacy_mnemonic(phrase)
+    derivation = "bip39_pbkdf2_sha512"
+    ident = modern_ident
+
+    if legacy:
+        ident = legacy_ident
+        derivation = "legacy_sha256"
+        print(
+            "warning: restoring a pre-BIP39 Beacon mnemonic with raw SHA256; "
+            "new identities should omit --legacy.",
+            file=sys.stderr,
+        )
+    elif expected_agent_id:
+        if expected_agent_id == modern_ident.agent_id:
+            ident = modern_ident
+        elif expected_agent_id == legacy_ident.agent_id:
+            ident = legacy_ident
+            derivation = "legacy_sha256"
+            print(
+                "warning: --expect-agent-id matched the legacy SHA256 mnemonic "
+                "derivation; use --legacy for future restores.",
+                file=sys.stderr,
+            )
+        else:
+            print(json.dumps({
+                "error": "Mnemonic does not restore to the expected agent ID",
+                "expected_agent_id": expected_agent_id,
+                "bip39_agent_id": modern_ident.agent_id,
+                "legacy_agent_id": legacy_ident.agent_id,
+            }, indent=2), file=sys.stderr)
+            return 1
+    else:
+        try:
+            existing_ident = AgentIdentity.load(password=password)
+        except (FileNotFoundError, ValueError):
+            existing_ident = None
+        if existing_ident and existing_ident.agent_id == legacy_ident.agent_id:
+            ident = legacy_ident
+            derivation = "legacy_sha256"
+            print(
+                "warning: existing keystore matches the legacy SHA256 mnemonic "
+                "derivation, so restore kept the legacy agent_id. Use --legacy "
+                "when restoring this identity on a new machine.",
+                file=sys.stderr,
+            )
+
+    if expected_agent_id and ident.agent_id != expected_agent_id:
+        print(json.dumps({
+            "error": "Mnemonic does not restore to the expected agent ID",
+            "expected_agent_id": expected_agent_id,
+            "selected_agent_id": ident.agent_id,
+            "derivation": derivation,
+        }, indent=2), file=sys.stderr)
+        return 1
+
     path = ident.save(password=password)
     print(json.dumps({
         "agent_id": ident.agent_id,
         "public_key_hex": ident.public_key_hex,
         "keystore": str(path),
+        "derivation": derivation,
         "restored": True,
     }, indent=2))
     return 0
@@ -4701,6 +4760,16 @@ def main(argv: Optional[List[str]] = None) -> None:
     sp = ident_sub.add_parser("restore", help="Restore identity from a mnemonic seed phrase")
     sp.add_argument("mnemonic_phrase", help='24-word mnemonic (quoted string, e.g. "word1 word2 ...")')
     sp.add_argument("--password", default=None, help="Encrypt the restored keystore")
+    sp.add_argument(
+        "--legacy",
+        action="store_true",
+        help="Restore a pre-BIP39 Beacon mnemonic using the legacy SHA256 derivation",
+    )
+    sp.add_argument(
+        "--expect-agent-id",
+        default=None,
+        help="Abort unless the restored mnemonic matches this agent ID; auto-selects legacy if needed",
+    )
     sp.set_defaults(func=cmd_identity_restore)
 
     sp = ident_sub.add_parser("trust", help="Trust an agent's public key")

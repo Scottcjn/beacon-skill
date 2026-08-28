@@ -34,6 +34,7 @@ This window covers ~161 commits since `v2.16.0` (2026-03-08). Highlights:
 - **ClawNews v0.1 surface** — first cut of `beacon clawnews` commands plus 15 unit tests for the validation functions in `clawnews_enhanced`. Foundation for the news-distribution transport rollout.
 
 ### Security
+- **Mnemonic restore compatibility guard** — `beacon identity restore` now has an explicit `--legacy` path for pre-BIP39 raw-SHA256 mnemonic identities, plus `--expect-agent-id` to refuse accidental derivation mismatches. The long-running Gemini SEO relay agent is pinned to legacy derivation so this KDF hardening does not silently rotate its production `agent_id`.
 - **Reject unauthenticated relay registration via heartbeat** ([#843](https://github.com/Scottcjn/beacon-skill/pull/843), fixes [#830](https://github.com/Scottcjn/beacon-skill/issues/830)) — before this fix, `/relay/heartbeat` would auto-register an arbitrary `agent_id` for any caller with any Bearer token, returning a valid `relay_token`. That's identity spoofing wearing a heartbeat costume. The fix requires explicit prior registration before heartbeats can mint relay tokens. **All operators should update.**
 - **Hardcoded `verify=False` SSL paths removed** ([#827](https://github.com/Scottcjn/beacon-skill/issues/827), [#846](https://github.com/Scottcjn/beacon-skill/pull/846)) — SSL verification is now on by default everywhere. The opt-out is environment-variable controlled (`BEACON_VERIFY_SSL=0`) for lab use, not silently off in production code.
 
