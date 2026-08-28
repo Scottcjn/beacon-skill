@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import secrets
+import unicodedata
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
@@ -26,6 +27,36 @@ AGENT_ID_PREFIX = "bcn_"
 IDENTITY_DIR_NAME = "identity"
 KEY_FILE_NAME = "agent.key"
 PBKDF2_ITERATIONS = 600_000
+BIP39_MNEMONIC_PBKDF2_ITERATIONS = 2048
+
+
+def _derive_mnemonic_private_key_seed(
+    phrase: str,
+    *,
+    passphrase: str = "",
+    legacy_sha256: bool = False,
+) -> bytes:
+    """Derive the 32-byte Ed25519 seed from a mnemonic phrase.
+
+    Modern mnemonic-backed identities use the BIP39 seed-stretching step:
+    PBKDF2-HMAC-SHA512 with 2048 iterations and the salt "mnemonic" plus the
+    optional user passphrase.  Older Beacon releases used raw SHA256(phrase);
+    keep that path available only as an explicit recovery mode for legacy
+    identities so restored keys do not silently switch derivation schemes.
+    """
+    normalized_phrase = unicodedata.normalize("NFKD", phrase.strip())
+    if legacy_sha256:
+        return hashlib.sha256(normalized_phrase.encode("utf-8")).digest()
+
+    salt = unicodedata.normalize("NFKD", f"mnemonic{passphrase}").encode("utf-8")
+    seed = hashlib.pbkdf2_hmac(
+        "sha512",
+        normalized_phrase.encode("utf-8"),
+        salt,
+        BIP39_MNEMONIC_PBKDF2_ITERATIONS,
+        dklen=64,
+    )
+    return seed[:32]
 
 
 def _derive_aes_key(password: str, salt: bytes) -> bytes:
@@ -76,7 +107,11 @@ class AgentIdentity:
     # ── Creation ──
 
     @classmethod
-    def generate(cls, use_mnemonic: bool = False) -> "AgentIdentity":
+    def generate(
+        cls,
+        use_mnemonic: bool = False,
+        mnemonic_passphrase: str = "",
+    ) -> "AgentIdentity":
         """Create a new random identity.  Optionally derive from a BIP39 mnemonic."""
         mnemonic_phrase: Optional[str] = None
         if use_mnemonic:
@@ -84,7 +119,10 @@ class AgentIdentity:
                 from mnemonic import Mnemonic  # optional dep
                 m = Mnemonic("english")
                 mnemonic_phrase = m.generate(strength=256)  # 24 words
-                seed = hashlib.sha256(mnemonic_phrase.encode("utf-8")).digest()
+                seed = _derive_mnemonic_private_key_seed(
+                    mnemonic_phrase,
+                    passphrase=mnemonic_passphrase,
+                )
                 sk = Ed25519PrivateKey.from_private_bytes(seed)
                 return cls(sk, mnemonic=mnemonic_phrase)
             except ImportError:
@@ -101,10 +139,25 @@ class AgentIdentity:
         return cls(sk)
 
     @classmethod
-    def from_mnemonic(cls, phrase: str) -> "AgentIdentity":
-        seed = hashlib.sha256(phrase.strip().encode("utf-8")).digest()
+    def from_mnemonic(
+        cls,
+        phrase: str,
+        *,
+        passphrase: str = "",
+        legacy_sha256: bool = False,
+    ) -> "AgentIdentity":
+        seed = _derive_mnemonic_private_key_seed(
+            phrase,
+            passphrase=passphrase,
+            legacy_sha256=legacy_sha256,
+        )
         sk = Ed25519PrivateKey.from_private_bytes(seed)
         return cls(sk, mnemonic=phrase.strip())
+
+    @classmethod
+    def from_legacy_mnemonic(cls, phrase: str) -> "AgentIdentity":
+        """Restore an identity created by pre-BIP39 Beacon releases."""
+        return cls.from_mnemonic(phrase, legacy_sha256=True)
 
     # ── Signing & Verification ──
 

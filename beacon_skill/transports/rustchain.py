@@ -15,6 +15,7 @@ from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.serialization import Encoding, PrivateFormat, PublicFormat, NoEncryption
 
+from ..identity import _derive_mnemonic_private_key_seed
 from ..retry import with_retry
 
 
@@ -59,7 +60,7 @@ class RustChainKeypair:
         )
 
     @staticmethod
-    def generate_with_mnemonic() -> "RustChainKeypair":
+    def generate_with_mnemonic(mnemonic_passphrase: str = "") -> "RustChainKeypair":
         """Generate a keypair backed by a 24-word BIP39 mnemonic."""
         try:
             from mnemonic import Mnemonic
@@ -67,7 +68,10 @@ class RustChainKeypair:
             raise RuntimeError("mnemonic package required (pip install mnemonic)")
         m = Mnemonic("english")
         phrase = m.generate(strength=256)
-        seed = hashlib.sha256(phrase.encode("utf-8")).digest()
+        seed = _derive_mnemonic_private_key_seed(
+            phrase,
+            passphrase=mnemonic_passphrase,
+        )
         sk = Ed25519PrivateKey.from_private_bytes(seed)
         sk_bytes = sk.private_bytes(Encoding.Raw, PrivateFormat.Raw, NoEncryption())
         pk_bytes = sk.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
@@ -79,9 +83,18 @@ class RustChainKeypair:
         )
 
     @staticmethod
-    def from_mnemonic(phrase: str) -> "RustChainKeypair":
+    def from_mnemonic(
+        phrase: str,
+        *,
+        passphrase: str = "",
+        legacy_sha256: bool = False,
+    ) -> "RustChainKeypair":
         """Restore keypair from a 24-word mnemonic."""
-        seed = hashlib.sha256(phrase.strip().encode("utf-8")).digest()
+        seed = _derive_mnemonic_private_key_seed(
+            phrase,
+            passphrase=passphrase,
+            legacy_sha256=legacy_sha256,
+        )
         sk = Ed25519PrivateKey.from_private_bytes(seed)
         sk_bytes = sk.private_bytes(Encoding.Raw, PrivateFormat.Raw, NoEncryption())
         pk_bytes = sk.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
@@ -91,6 +104,11 @@ class RustChainKeypair:
             address=_rtc_address_from_public_key_bytes(pk_bytes),
             mnemonic=phrase.strip(),
         )
+
+    @staticmethod
+    def from_legacy_mnemonic(phrase: str) -> "RustChainKeypair":
+        """Restore a keypair created by pre-BIP39 Beacon releases."""
+        return RustChainKeypair.from_mnemonic(phrase, legacy_sha256=True)
 
     @staticmethod
     def from_private_key_hex(private_key_hex: str) -> "RustChainKeypair":
