@@ -15,6 +15,7 @@ def setup_function():
     beacon_chat.ATLAS_RATE_LIMITER._last_cleanup = 0.0
     beacon_chat.app.config["RATE_LIMIT_READ_PER_MIN"] = beacon_chat.READ_LIMIT_PER_MIN
     beacon_chat.app.config["RATE_LIMIT_WRITE_PER_MIN"] = beacon_chat.WRITE_LIMIT_PER_MIN
+    beacon_chat.app.config["TRUSTED_PROXY_CIDRS"] = "127.0.0.1,::1"
 
     # Ensure bounty table exists for endpoint tests in fresh DBs.
     conn = sqlite3.connect(beacon_chat.DB_PATH)
@@ -122,6 +123,75 @@ def test_api_health_read_rate_limit():
 
     assert r1.status_code == 200
     assert r2.status_code == 429
+
+
+def test_get_real_ip_ignores_forwarded_headers_from_untrusted_client():
+    beacon_chat.app.config["TRUSTED_PROXY_CIDRS"] = "127.0.0.1"
+
+    with beacon_chat.app.test_request_context(
+        "/api/health",
+        headers={
+            "X-Real-IP": "203.0.113.10",
+            "X-Forwarded-For": "198.51.100.9, 203.0.113.11",
+        },
+        environ_overrides={"REMOTE_ADDR": "10.77.77.77"},
+    ):
+        assert beacon_chat.get_real_ip() == "10.77.77.77"
+
+
+def test_get_real_ip_uses_proxy_appended_forwarded_for_from_trusted_proxy():
+    beacon_chat.app.config["TRUSTED_PROXY_CIDRS"] = "127.0.0.1"
+
+    with beacon_chat.app.test_request_context(
+        "/api/health",
+        headers={"X-Forwarded-For": "198.51.100.200, 203.0.113.25"},
+        environ_overrides={"REMOTE_ADDR": "127.0.0.1"},
+    ):
+        assert beacon_chat.get_real_ip() == "203.0.113.25"
+
+
+def test_direct_header_spoofing_cannot_bypass_read_rate_limit():
+    beacon_chat.app.config["TESTING"] = True
+    beacon_chat.app.config["RATE_LIMIT_READ_PER_MIN"] = 1
+    beacon_chat.app.config["TRUSTED_PROXY_CIDRS"] = "127.0.0.1"
+
+    client = beacon_chat.app.test_client()
+    r1 = client.get(
+        "/api/health",
+        headers={"X-Real-IP": "203.0.113.10"},
+        environ_overrides={"REMOTE_ADDR": "10.88.88.88"},
+    )
+    r2 = client.get(
+        "/api/health",
+        headers={"X-Real-IP": "203.0.113.11"},
+        environ_overrides={"REMOTE_ADDR": "10.88.88.88"},
+    )
+
+    assert r1.status_code == 200
+    assert r2.status_code == 429
+    assert "api_read:10.88.88.88" in beacon_chat.ATLAS_RATE_LIMITER._entries
+
+
+def test_leftmost_forwarded_for_spoofing_cannot_bypass_read_rate_limit():
+    beacon_chat.app.config["TESTING"] = True
+    beacon_chat.app.config["RATE_LIMIT_READ_PER_MIN"] = 1
+    beacon_chat.app.config["TRUSTED_PROXY_CIDRS"] = "127.0.0.1"
+
+    client = beacon_chat.app.test_client()
+    r1 = client.get(
+        "/api/health",
+        headers={"X-Forwarded-For": "198.51.100.200, 203.0.113.25"},
+        environ_overrides={"REMOTE_ADDR": "127.0.0.1"},
+    )
+    r2 = client.get(
+        "/api/health",
+        headers={"X-Forwarded-For": "198.51.100.201, 203.0.113.25"},
+        environ_overrides={"REMOTE_ADDR": "127.0.0.1"},
+    )
+
+    assert r1.status_code == 200
+    assert r2.status_code == 429
+    assert "api_read:203.0.113.25" in beacon_chat.ATLAS_RATE_LIMITER._entries
 
 
 def test_api_write_limit_is_per_ip():

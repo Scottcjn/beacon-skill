@@ -9,6 +9,7 @@ Runs on port 8071 behind nginx.
 
 import hashlib
 import html
+import ipaddress
 from urllib.parse import quote as _urlquote
 import os
 import secrets
@@ -58,6 +59,7 @@ RELAY_PING_NONCE_WINDOW_S = 300     # Max clock skew + replay window
 RELAY_PING_NONCE_MAX_LEN = 128      # Bound nonce payload size
 RELAY_SEO_DESCRIPTION_MAX_LEN = 500
 RELAY_SEO_URL_MAX_LEN = 512
+TRUSTED_PROXY_CIDRS = os.environ.get("ATLAS_TRUSTED_PROXIES", "127.0.0.1,::1")
 
 KNOWN_PROVIDERS = {
     "xai": "xAI (Grok)",
@@ -85,9 +87,75 @@ BANNED_NAME_PATTERNS = [
 ]
 
 
+def _configured_trusted_proxy_networks():
+    """Return configured proxy CIDRs that may supply forwarding headers."""
+    raw = app.config.get("TRUSTED_PROXY_CIDRS", TRUSTED_PROXY_CIDRS)
+    if isinstance(raw, str):
+        entries = [part.strip() for part in raw.split(",")]
+    else:
+        entries = [str(part).strip() for part in (raw or [])]
+
+    networks = []
+    for entry in entries:
+        if not entry:
+            continue
+        try:
+            networks.append(ipaddress.ip_network(entry, strict=False))
+        except ValueError:
+            app.logger.warning("Ignoring invalid trusted proxy CIDR: %s", entry)
+    return tuple(networks)
+
+
+def _parse_ip_literal(value):
+    try:
+        return ipaddress.ip_address(str(value or "").strip())
+    except ValueError:
+        return None
+
+
+def _ip_in_networks(ip, networks):
+    return any(ip in network for network in networks)
+
+
+def _forwarded_for_client_ip(header_value, trusted_networks):
+    """Pick the proxy-appended client IP from an X-Forwarded-For chain.
+
+    Nginx's ``$proxy_add_x_forwarded_for`` appends the direct client address to
+    any client-supplied left side of the chain. Walking from the right prevents
+    a caller from choosing the rate-limit key by pre-seeding extra leftmost
+    values.
+    """
+    chain = []
+    for part in (header_value or "").split(","):
+        ip = _parse_ip_literal(part)
+        if ip is not None:
+            chain.append(ip)
+    for ip in reversed(chain):
+        if not _ip_in_networks(ip, trusted_networks):
+            return str(ip)
+    return None
+
+
 def get_real_ip():
-    """Get real client IP from proxy headers, falling back to remote_addr."""
-    return request.headers.get("X-Real-IP") or request.headers.get("X-Forwarded-For", "").split(",")[0].strip() or request.remote_addr
+    """Get a normalized client IP without trusting spoofable headers directly."""
+    remote_addr = request.remote_addr or ""
+    trusted_networks = _configured_trusted_proxy_networks()
+    remote_ip = _parse_ip_literal(remote_addr)
+    if remote_ip is None or not _ip_in_networks(remote_ip, trusted_networks):
+        return remote_addr
+
+    forwarded_client = _forwarded_for_client_ip(
+        request.headers.get("X-Forwarded-For", ""),
+        trusted_networks,
+    )
+    if forwarded_client:
+        return forwarded_client
+
+    real_ip = _parse_ip_literal(request.headers.get("X-Real-IP", ""))
+    if real_ip is not None and not _ip_in_networks(real_ip, trusted_networks):
+        return str(real_ip)
+
+    return remote_addr
 
 def dns_resolve(name_or_id):
     """Resolve a human-readable name to a beacon agent_id via DNS table.
@@ -3065,7 +3133,7 @@ def _agent_profile_html(agent, caps, dns_names, profile=None, matches=None):
         for match in matches[:4]:
             match_items.append(
                 "<li>"
-                f"<strong><a href=\"/beacon/agent/{_urlquote(str(match['agent_id']), safe="")}\">{html.escape(str(match['name']))}</a></strong> "
+                f"<strong><a href=\"/beacon/agent/{_urlquote(str(match['agent_id']), safe='')}\">{html.escape(str(match['name']))}</a></strong> "
                 f"({html.escape(str(match['provider_name']))}) — score {match['score']:.1f}"
                 f"<br><span class=\"meta\">{html.escape(' · '.join(str(r) for r in match['reasons'][:3]))}</span>"
                 "</li>"
