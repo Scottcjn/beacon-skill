@@ -1235,6 +1235,168 @@ def relay_register():
     }, 201)
 
 
+@app.route("/beacon/join", methods=["POST", "OPTIONS"])
+def beacon_join():
+    """Compatibility join endpoint for Beacon Atlas auto-registration.
+
+    Bounty #2127 originally documented `/beacon/join` as the public Atlas
+    registration path.  The relay later moved to `/relay/register` and added
+    mandatory Ed25519 proof-of-key ownership.  Keep the old public route alive,
+    but preserve the same signed-registration security model: callers must
+    prove control of `pubkey_hex`, duplicate derived `agent_id`s are upserted,
+    and malformed public keys fail before any DB write.
+    """
+    if request.method == "OPTIONS":
+        resp = jsonify({})
+        resp.headers["Access-Control-Allow-Origin"] = "*"
+        resp.headers["Access-Control-Allow-Methods"] = "POST"
+        resp.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
+        return resp, 204
+
+    rl = enforce_rate_limit("beacon_join_write", _write_limit_per_min())
+    if rl:
+        return rl
+
+    data = request.get_json(silent=True)
+    if not data:
+        return cors_json({"error": "Invalid JSON"}, 400)
+
+    pubkey_hex = data.get("pubkey_hex", "").strip()
+    model_id = data.get("model_id", "").strip()
+    provider = data.get("provider", "beacon").strip()
+    capabilities = data.get("capabilities", [])
+    webhook_url = data.get("webhook_url", "").strip()
+    name = data.get("name", "").strip()
+    signature = data.get("signature", "").strip()
+    requested_agent_id = data.get("agent_id", "").strip()
+    profile_meta = _merge_collab_metadata({}, data)
+
+    if not pubkey_hex or len(pubkey_hex) != 64:
+        return cors_json({"error": "pubkey_hex must be 64 hex chars (32 bytes Ed25519)"}, 400)
+    try:
+        bytes.fromhex(pubkey_hex)
+    except ValueError:
+        return cors_json({"error": "pubkey_hex is not valid hex"}, 400)
+
+    derived_agent_id = agent_id_from_pubkey_hex(pubkey_hex)
+    if requested_agent_id and requested_agent_id.startswith("bcn_") and requested_agent_id != derived_agent_id:
+        return cors_json({
+            "error": "agent_id mismatch: for bcn_* identities, agent_id must match the derived ID of the pubkey",
+            "expected": derived_agent_id,
+            "received": requested_agent_id,
+        }, 400)
+
+    if not model_id:
+        model_id = requested_agent_id or name or derived_agent_id
+
+    if not name:
+        name = requested_agent_id or derived_agent_id
+    if len(name) < 3:
+        return cors_json({"error": "name must be at least 3 characters"}, 400)
+    if len(name) > 64:
+        return cors_json({"error": "name too long (max 64 chars)"}, 400)
+    name_lower = name.lower()
+    for banned in BANNED_NAME_PATTERNS:
+        if banned in name_lower:
+            return cors_json({"error": f"Generic AI model names are not allowed. Choose a unique agent name that represents YOUR agent, not just the model it runs on. (rejected pattern: '{banned}')"}, 400)
+
+    if provider not in KNOWN_PROVIDERS:
+        return cors_json({"error": f"Unknown provider (valid: {', '.join(KNOWN_PROVIDERS)})"}, 400)
+
+    if not isinstance(capabilities, list):
+        return cors_json({"error": "capabilities must be a list"}, 400)
+
+    if not signature:
+        return cors_json({"error": "signature required for beacon join"}, 400)
+
+    reg_payload = json.dumps({
+        "model_id": model_id,
+        "provider": provider,
+        "pubkey_hex": pubkey_hex,
+    }, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    sig_verified = verify_ed25519(pubkey_hex, signature, reg_payload)
+    if sig_verified is False:
+        # `/relay/ping` signs the derived agent_id. Accept that proof shape too
+        # so existing Beacon identities can use `/beacon/join` without learning a
+        # second signing convention.
+        sig_verified = verify_ed25519(pubkey_hex, signature, derived_agent_id.encode("utf-8"))
+    if sig_verified is None:
+        app.logger.error("NaCl unavailable, rejecting beacon join for pubkey %s", pubkey_hex[:16])
+        return cors_json({
+            "error": "Signature verification unavailable",
+            "hint": "Server missing Ed25519 verification support (PyNaCl)",
+        }, 503)
+    if sig_verified is False:
+        return cors_json({"error": "Invalid Ed25519 signature"}, 403)
+
+    ip = get_real_ip() or "unknown"
+    now = time.time()
+    db = get_db()
+
+    existing = db.execute(
+        "SELECT status FROM relay_agents WHERE agent_id = ?",
+        (derived_agent_id,),
+    ).fetchone()
+    if existing and existing["status"] == "revoked":
+        return cors_json({"error": "This agent identity has been revoked and cannot be re-registered"}, 403)
+
+    # Rate-limit only net-new joins. A duplicate join is an idempotent upsert,
+    # which is one of #2127's acceptance criteria and should not turn into a
+    # conflict or cooldown error.
+    if not existing and not ATLAS_RATE_LIMITER.allow(
+        f"beacon_join:{ip}",
+        1,
+        window_seconds=RELAY_REGISTER_COOLDOWN_S,
+    ):
+        return cors_json({"error": "Rate limited — wait before joining again"}, 429)
+
+    token = f"relay_{secrets.token_hex(24)}"
+    token_expires = now + RELAY_TOKEN_TTL_S
+
+    db.execute("""
+        INSERT INTO relay_agents
+            (agent_id, pubkey_hex, model_id, provider, capabilities, webhook_url,
+             relay_token, token_expires, name, status, beat_count, registered_at, last_heartbeat, metadata, origin_ip)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', 0, ?, ?, ?, ?)
+        ON CONFLICT(agent_id) DO UPDATE SET
+            model_id=excluded.model_id, provider=excluded.provider,
+            capabilities=excluded.capabilities, webhook_url=excluded.webhook_url,
+            relay_token=excluded.relay_token, token_expires=excluded.token_expires,
+            name=excluded.name, last_heartbeat=excluded.last_heartbeat,
+            metadata=excluded.metadata,
+            origin_ip=excluded.origin_ip
+    """, (derived_agent_id, pubkey_hex, model_id, provider,
+          json.dumps(capabilities), webhook_url, token,
+          token_expires, name, now, now, json.dumps(profile_meta), ip))
+    db.commit()
+
+    db.execute("INSERT INTO relay_log (ts, action, agent_id, detail) VALUES (?, 'beacon_join', ?, ?)",
+               (now, derived_agent_id, json.dumps({"model_id": model_id, "provider": provider, "ip": ip})))
+    db.commit()
+
+    dns_name = name.lower().replace(" ", "-").replace("_", "-")
+    dns_name = "".join(c for c in dns_name if c.isalnum() or c in "-.")
+    try:
+        db.execute("INSERT OR IGNORE INTO beacon_dns (name, agent_id, owner, created_at) VALUES (?, ?, ?, ?)",
+                   (dns_name, derived_agent_id, provider, now))
+        db.commit()
+    except Exception:
+        pass
+
+    return cors_json({
+        "ok": True,
+        "agent_id": derived_agent_id,
+        "relay_token": token,
+        "token_expires": token_expires,
+        "ttl_s": RELAY_TOKEN_TTL_S,
+        "capabilities_registered": capabilities,
+        "signature_verified": sig_verified,
+        "crypto_available": HAS_NACL,
+        "joined_via": "/beacon/join",
+        "upserted": existing is not None,
+    }, 201)
+
+
 @app.route("/relay/heartbeat", methods=["POST", "OPTIONS"])
 def relay_heartbeat():
     """Submit a relay heartbeat (proof of life). Refreshes token TTL.
@@ -1971,6 +2133,17 @@ def api_all_agents():
         })
 
     return cors_json(agents)
+
+
+@app.route("/beacon/atlas", methods=["GET", "OPTIONS"])
+def beacon_atlas():
+    """Public Beacon-prefixed alias for the Atlas agent list.
+
+    The static Atlas UI and #2127 both expect the public domain to expose the
+    combined native + relay list under `/beacon/atlas`; keep it backed by the
+    same implementation as `/api/agents` so the two read surfaces cannot drift.
+    """
+    return api_all_agents()
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -3131,11 +3304,15 @@ def _agent_profile_html(agent, caps, dns_names, profile=None, matches=None):
     if matches:
         match_items = []
         for match in matches[:4]:
+            match_agent_id = _urlquote(str(match["agent_id"]), safe="")
+            match_name = html.escape(str(match["name"]))
+            match_provider = html.escape(str(match["provider_name"]))
+            match_reasons = html.escape(" · ".join(str(r) for r in match["reasons"][:3]))
             match_items.append(
                 "<li>"
-                f"<strong><a href=\"/beacon/agent/{_urlquote(str(match['agent_id']), safe='')}\">{html.escape(str(match['name']))}</a></strong> "
-                f"({html.escape(str(match['provider_name']))}) — score {match['score']:.1f}"
-                f"<br><span class=\"meta\">{html.escape(' · '.join(str(r) for r in match['reasons'][:3]))}</span>"
+                f"<strong><a href=\"/beacon/agent/{match_agent_id}\">{match_name}</a></strong> "
+                f"({match_provider}) — score {match['score']:.1f}"
+                f"<br><span class=\"meta\">{match_reasons}</span>"
                 "</li>"
             )
         match_block = (
