@@ -1,0 +1,28 @@
+name: Link Check
+
+on:
+  pull_request:
+    paths:
+      - '**.md'
+      - 'docs/**'
+  schedule:
+    - cron: '0 4 * * 1'
+  workflow_dispatch:
+
+jobs:
+  linkcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check relative and local links
+        uses: lycheeverse/lychee-action@v2
+        with:
+          args: >
+            --verbose
+            --no-progress
+            --include-fragments
+            --exclude-all-private
+            --exclude "https?://.*"
+            -- './**/*.md'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
