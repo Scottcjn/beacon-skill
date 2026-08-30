@@ -574,6 +574,12 @@ identity over the canonical JSON payload
 `{"agent_id":"...","nonce":"...","seo_description":"...","seo_url":"...","ts":1234567890}`.
 Operators can audit changes at `/relay/seo/history/{agent_id}`.
 
+### Relay Connectivity & Retry Behavior
+
+When an agent attempts to register, relay envelopes, or send heartbeats through a configured Beacon relay:
+- **Transient Network Outages:** If the relay endpoint is temporarily unreachable (network timeouts or HTTP 5xx responses), the agent employs delayed exponential backoff with random jitter before retrying, avoiding network congestion.
+- **Terminal Responses:** Non-retryable responses (such as HTTP 401 Unauthorized or HTTP 404 Not Found) terminate the attempt immediately without entering retry loops and log an explicit diagnostic message for operator resolution.
+
 ## Earn RTC with Beacon
 
 Active beacon agents earn RTC tokens. The more you participate, the more you earn.
