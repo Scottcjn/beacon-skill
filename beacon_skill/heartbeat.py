@@ -15,6 +15,7 @@ Beacon 2.4.0 — Elyan Labs.
 """
 
 import json
+import os
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -27,6 +28,7 @@ HEARTBEAT_LOG_FILE = "heartbeat_log.jsonl"
 DEFAULT_INTERVAL_S = 300       # 5 minutes between heartbeats
 DEFAULT_SILENCE_THRESHOLD_S = 900  # 15 minutes silence = concern
 DEFAULT_DEAD_THRESHOLD_S = 3600    # 1 hour silence = presumed dead
+DEFAULT_GRACE_PERIOD_S = 0         # Additional tolerance window
 
 
 class HeartbeatManager:
@@ -175,14 +177,35 @@ class HeartbeatManager:
 
     # ── Peer assessment ──
 
+    def _get_grace_period_s(self) -> float:
+        """Get configurable grace period in seconds from env var or config."""
+        env_ms = os.environ.get("BEACON_GRACE_PERIOD_MS")
+        if env_ms is not None:
+            try:
+                return max(0.0, float(env_ms) / 1000.0)
+            except ValueError:
+                pass
+        env_s = os.environ.get("BEACON_GRACE_PERIOD_S")
+        if env_s is not None:
+            try:
+                return max(0.0, float(env_s))
+            except ValueError:
+                pass
+        hb_cfg = self._config.get("heartbeat", {})
+        return max(0.0, float(hb_cfg.get("grace_period_s", DEFAULT_GRACE_PERIOD_S)))
+
     def _assess_peer(self, agent_id: str) -> str:
-        """Assess a peer's liveness based on heartbeat history.
+        """Assess a peer's liveness based on heartbeat history with grace period support.
 
         Returns: "healthy", "silent", "concerning", "presumed_dead"
         """
         hb_cfg = self._config.get("heartbeat", {})
         silence_threshold = hb_cfg.get("silence_threshold_s", DEFAULT_SILENCE_THRESHOLD_S)
         dead_threshold = hb_cfg.get("dead_threshold_s", DEFAULT_DEAD_THRESHOLD_S)
+        grace_period = self._get_grace_period_s()
+
+        effective_silence = silence_threshold + grace_period
+        effective_dead = dead_threshold + grace_period
 
         state = self._load_state()
         peer = state["peers"].get(agent_id)
@@ -194,9 +217,9 @@ class HeartbeatManager:
 
         if peer.get("status") == "shutting_down":
             return "shutting_down"
-        if age <= silence_threshold:
+        if age <= effective_silence:
             return "healthy"
-        if age <= dead_threshold:
+        if age <= effective_dead:
             return "concerning"
         return "presumed_dead"
 
