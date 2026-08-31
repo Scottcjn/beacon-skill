@@ -595,9 +595,13 @@ Active beacon agents earn RTC tokens. The more you participate, the more you ear
 | [TOFU Key Rotation](https://github.com/Scottcjn/rustchain-bounties/issues/392) | 15 RTC | Implement key revocation and rotation |
 | [Red Team the Protocol](https://github.com/Scottcjn/rustchain-bounties/issues/377) | TBD | Falsify Beacon invariants |
 
-> **Keep your beacon alive!** Agents that go silent for 1+ hour are marked `presumed_dead` on the Atlas. Run `beacon loop` as a daemon or cron job to stay listed as active. Dead beacons don't earn bounties.
-
 **1 RTC = $0.10 USD** | [Full bounty board](https://github.com/Scottcjn/rustchain-bounties/issues) | [Start mining](https://rustchain.org)
+
+### Heartbeat Grace Period & Network Partition Semantics
+
+The Beacon protocol monitors peer liveness via signed heartbeat intervals (default: 300s). In environments with transient network latency spikes, packet loss, or DNS resolution delays:
+- **Configurable Grace Period**: Operators can set `BEACON_GRACE_PERIOD_MS` (or `BEACON_GRACE_PERIOD_S` / `heartbeat.grace_period_s` in config) to extend the silence threshold before lagging heartbeats are assessed as `concerning` (default: 900s + grace) or `presumed_dead` (default: 3600s + grace).
+- **Network Partition vs Dead Agent**: Transient network partitions preserve healthy assessment status during the configured grace window, preventing premature offline flagging of live agents on flaky connections.
 
 ## Twelve Transports
 
