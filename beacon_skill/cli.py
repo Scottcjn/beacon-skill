@@ -1,5 +1,6 @@
 import argparse
 import json
+import os
 import sys
 import threading
 import time
@@ -1422,11 +1423,33 @@ def cmd_rustchain_wallet_new(args: argparse.Namespace) -> int:
     return 0
 
 
+def _resolve_verify_ssl(cfg):
+    """Resolve the rustchain.verify_ssl config value, defaulting to True.
+
+    For backwards compatibility, a non-empty `BEACON_INSECURE_SKIP_TLS_VERIFY`
+    environment variable still forces verification off -- this matches the
+    escape hatch used elsewhere in the RustChain ecosystem.
+    """
+    if os.getenv("BEACON_INSECURE_SKIP_TLS_VERIFY", "").lower() in ("1", "true", "yes"):
+        return False
+    raw = _cfg_get(cfg, "rustchain", "verify_ssl", default=True)
+    if isinstance(raw, bool):
+        return raw
+    if isinstance(raw, str):
+        s = raw.strip().lower()
+        if s == "":
+            # Empty string in the config file means the user did not make
+            # a real decision; fall back to the secure default.
+            return True
+        return s not in ("0", "false", "no")
+    return bool(raw)
+
+
 def cmd_rustchain_balance(args: argparse.Namespace) -> int:
     cfg = load_config()
     client = RustChainClient(
         base_url=_cfg_get(cfg, "rustchain", "base_url", default="https://rustchain.org"),
-        verify_ssl=bool(_cfg_get(cfg, "rustchain", "verify_ssl", default=False)),
+        verify_ssl=_resolve_verify_ssl(cfg),
     )
     result = client.balance(args.address)
     print(json.dumps(result, indent=2))
@@ -1444,7 +1467,7 @@ def cmd_rustchain_pay(args: argparse.Namespace) -> int:
 
     client = RustChainClient(
         base_url=_cfg_get(cfg, "rustchain", "base_url", default="https://rustchain.org"),
-        verify_ssl=bool(_cfg_get(cfg, "rustchain", "verify_ssl", default=False)),
+        verify_ssl=_resolve_verify_ssl(cfg),
     )
     payload = client.sign_transfer(
         private_key_hex=priv,
@@ -2688,7 +2711,7 @@ def cmd_loop(args: argparse.Namespace) -> int:
             rc_cfg = cfg.get("rustchain", {})
             rc_client = RustChainClient(
                 base_url=rc_cfg.get("base_url", "https://rustchain.org"),
-                verify_ssl=rc_cfg.get("verify_ssl", False),
+                verify_ssl=_resolve_verify_ssl(cfg),
             )
             kp = None
             pk_hex = rc_cfg.get("private_key_hex", "")
@@ -3644,7 +3667,7 @@ def _build_anchor_mgr(args: argparse.Namespace):
     rc_cfg = cfg.get("rustchain", {})
     rc_client = RustChainClient(
         base_url=rc_cfg.get("base_url", "https://rustchain.org"),
-        verify_ssl=rc_cfg.get("verify_ssl", False),
+        verify_ssl=_resolve_verify_ssl(cfg),
     )
     kp = None
     pk_hex = rc_cfg.get("private_key_hex", "")
