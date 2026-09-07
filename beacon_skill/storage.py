@@ -133,7 +133,19 @@ def jsonl_count(name: str) -> int:
 
 
 def read_jsonl_tail(name: str, limit: int = 1000) -> List[Dict[str, Any]]:
-    """Read the last N entries from a JSONL file efficiently."""
+    """Read the last N entries from a JSONL file efficiently.
+
+    ``limit`` is validated at the boundary: Python's ``lines[-limit:]`` makes
+    ``limit == 0`` return the WHOLE file (``lines[-0:] == lines[:]``) and a
+    negative limit return a large slice, both contradicting the "last N
+    entries" contract and unexpectedly widening every history/log path that
+    reuses this helper. So a zero limit returns nothing and a negative limit
+    is rejected. Reported by @antoleod under #254.
+    """
+    if limit < 0:
+        raise ValueError(f"read_jsonl_tail: limit must be >= 0, got {limit!r}")
+    if limit == 0:
+        return []
     path = _safe_path(name)
     if not path.exists():
         return []
