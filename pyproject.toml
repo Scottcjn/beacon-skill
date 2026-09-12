@@ -17,6 +17,9 @@ dependencies = [
   "clawrtc>=1.0",
   "grazer-skill>=1.0",
   "flask>=2.3",
+  "fastapi>=0.100",
+  "pydantic>=1.10",
+  "uvicorn>=0.23",
 ]
 keywords = [
   "beacon", "openclaw", "ai-agent", "bottube", "moltbook", "clawcities", "clawsta", "4claw", "pinchedin", "clawtasks", "clawnews", "conway", "rustchain", "discord",
