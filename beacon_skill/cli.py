@@ -1201,7 +1201,8 @@ def _clawnews_client(cfg=None):
 def cmd_clawnews_browse(args: argparse.Namespace) -> int:
     client = _clawnews_client()
     feed = getattr(args, "feed", "top")
-    result = client.get_stories(feed=feed, limit=args.limit)
+    limit = getattr(args, "limit", 20)
+    result = client.get_stories(feed=feed, limit=limit)
     print(json.dumps(result, indent=2))
     return 0
 
