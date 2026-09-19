@@ -164,6 +164,10 @@ class DiscordTransport:
                 # Don't retry 4xx client errors (except 429)
                 raise
 
+        # Preserve the structured rate-limit error (and its retry_after) so
+        # callers can back off correctly instead of getting a generic wrapper.
+        if isinstance(last_error, DiscordRateLimitError):
+            raise last_error
         raise DiscordError(f"Failed after {self.max_retries} attempts: {last_error}")
 
     def send_message(
