@@ -831,7 +831,7 @@ curl http://agent.example.com/beacon/health
 | `BEACON_CONFIG_PATH` | Custom config file path | `~/.beacon/config.json` |
 | `BEACON_IDENTITY_PATH` | Custom identity file path | `~/.beacon/identity/agent.key` |
 | `BEACON_INBOX_PATH` | Custom inbox file path | `~/.beacon/inbox.jsonl` |
-| `PYTHONHTTPSVERIFY` | Disable SSL verification (dev only) | `1` |
+| `BEACON_INSECURE_SKIP_TLS_VERIFY` | Skip RustChain TLS verification (self-signed lab nodes only) | unset |
 
 ## FAQ
 
@@ -988,12 +988,21 @@ REM Then restart Command Prompt
 ```
 
 #### SSL Certificate Errors
-If you see `SSL: CERTIFICATE_VERIFY_FAILED`:
+If you see `SSL: CERTIFICATE_VERIFY_FAILED` against `https://rustchain.org`, your
+system CA bundle is stale (`pip install -U certifi`) or you are behind a
+TLS-intercepting proxy. Do not turn verification off to get past that.
+
+Only for a **self-signed lab node** you run yourself:
 ```bash
-# For self-signed nodes (development)
-export PYTHONHTTPSVERIFY=0
-# Or edit config.json to set verify_ssl: false per transport
+# Per-process escape hatch (development only)
+export BEACON_INSECURE_SKIP_TLS_VERIFY=1
+# Or, in ~/.beacon/config.json:  "rustchain": { "verify_ssl": false }
 ```
+
+> **Upgraded from an older install?** `beacon init` before 2.17.1 wrote
+> `"verify_ssl": false` into every new config. Beacon now warns once at startup
+> when it finds that. Fix it by setting `"verify_ssl": true` (or deleting the
+> key) in `~/.beacon/config.json`.
 
 #### UDP Broadcast Not Working
 - Ensure you're on the same network subnet
