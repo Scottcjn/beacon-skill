@@ -15,6 +15,7 @@ Supports both synchronous and asynchronous operation.
 import hashlib
 import json
 import logging
+import os
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -34,9 +35,22 @@ logger = logging.getLogger(__name__)
 
 
 # API Endpoints
+#
+# Atlas by hostname, not raw node IP: the node's certificate is issued for the
+# hostname, so a raw-IP URL only works with TLS verification off. Override for
+# a lab node with BEACON_ATLAS_URL; verification stays on either way.
 BEACON_DIRECTORY_URL = "https://bottube.ai/api/beacon/directory"
-BEACON_ATLAS_URL = "https://50.28.86.131/beacon/atlas"
+DEFAULT_BEACON_ATLAS_URL = "https://rustchain.org/beacon/atlas"
 AGENTFOLIO_SATP_REGISTRY_URL = "https://agentfolio.bot/api/satp"
+
+
+def resolve_atlas_url(env: Optional[Dict[str, str]] = None) -> str:
+    """Atlas base URL: ``BEACON_ATLAS_URL`` if set and non-blank, else the hostname default."""
+    source = os.environ if env is None else env
+    return (source.get("BEACON_ATLAS_URL") or "").strip() or DEFAULT_BEACON_ATLAS_URL
+
+
+BEACON_ATLAS_URL = resolve_atlas_url()
 
 
 class MigrationError(Exception):

@@ -17,7 +17,9 @@ jobs:
         continue-on-error: true  # rewards are best-effort; never gate CI
         uses: Scottcjn/rustchain-bounties/actions/rtc-reward@0de7a37bebfefde4f0c4baeebc3a17ffd1ba76e3 # pinned 2026-09-03 (was @main)
         with:
-          node-url: https://50.28.86.131
+          # Hostname, not raw node IP: the cert is issued for rustchain.org,
+          # so the IP form only works with TLS verification disabled.
+          node-url: https://rustchain.org
           amount: 5
           wallet-from: founder_community
           admin-key: ${{ secrets.RTC_ADMIN_KEY }}
