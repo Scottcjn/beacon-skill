@@ -10,6 +10,7 @@ Provides functionality to:
 
 import json
 import logging
+import os
 from dataclasses import dataclass, asdict
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -20,9 +21,24 @@ logger = logging.getLogger(__name__)
 
 
 # Configuration
+#
+# The Atlas is addressed by hostname, never by a node's raw IP. The node's TLS
+# certificate is issued for the hostname, so a raw-IP URL can only ever work
+# with certificate verification switched off -- which is exactly the failure
+# mode this module must not invite. Verification stays on (requests' default).
+# Override for a lab node with BEACON_ATLAS_URL.
 BEACON_DIRECTORY_URL = "https://bottube.ai/api/beacon/directory"
-BEACON_ATLAS_URL = "https://50.28.86.131/beacon/atlas"
+DEFAULT_BEACON_ATLAS_URL = "https://rustchain.org/beacon/atlas"
 AGENTFOLIO_API_URL = "https://agentfolio.bot/api/satp"
+
+
+def resolve_atlas_url(env: Optional[Dict[str, str]] = None) -> str:
+    """Atlas base URL: ``BEACON_ATLAS_URL`` if set and non-blank, else the hostname default."""
+    source = os.environ if env is None else env
+    return (source.get("BEACON_ATLAS_URL") or "").strip() or DEFAULT_BEACON_ATLAS_URL
+
+
+BEACON_ATLAS_URL = resolve_atlas_url()
 DEFAULT_TIMEOUT = 30
 
 
