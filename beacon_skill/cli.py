@@ -380,7 +380,10 @@ def cmd_init(args: argparse.Namespace) -> int:
         },
         "rustchain": {
             "base_url": "https://rustchain.org",
-            "verify_ssl": False,
+            # TLS verification on by default. rustchain.org serves a valid
+            # certificate; the only reason to turn this off is a self-signed
+            # lab node, and that is an explicit opt-out, never the template.
+            "verify_ssl": True,
             "private_key_hex": "",
             "enabled": "rustchain" in enabled_transports,
         },

@@ -1,8 +1,64 @@
 import json
 import logging
 import os
+import sys
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Optional, TextIO
+
+# Emit the insecure-TLS warning at most once per process so long-running
+# `beacon loop` daemons do not spam stderr on every config reload.
+_INSECURE_TLS_WARNED = False
+
+
+def rustchain_verify_ssl_is_off(cfg: Dict[str, Any]) -> bool:
+    """Return True when the config explicitly turns RustChain TLS verification off.
+
+    Only an explicit opt-out counts: a missing key, ``None`` or an empty string
+    mean "no decision", and the secure default applies. Accepted opt-out
+    spellings are ``false``, ``0`` and ``"false"``/``"0"``/``"no"``.
+    """
+    if not isinstance(cfg, dict):
+        return False
+    rc = cfg.get("rustchain")
+    if not isinstance(rc, dict):
+        return False
+    raw = rc.get("verify_ssl")
+    if isinstance(raw, str):
+        return raw.strip().lower() in ("0", "false", "no")
+    if isinstance(raw, (bool, int)):
+        return not raw
+    return False
+
+
+def warn_if_insecure_rustchain_tls(cfg: Dict[str, Any], stream: Optional[TextIO] = None) -> bool:
+    """Warn (once per process) when a config still carries ``verify_ssl: false``.
+
+    ``beacon init`` wrote ``"verify_ssl": false`` into every new config before
+    2.17.1, so users who ran it stay insecure even after the code default
+    flipped to verified TLS. This does not rewrite the user's file; it tells
+    them what to change. The warning is suppressed when the operator has set
+    ``BEACON_INSECURE_SKIP_TLS_VERIFY`` (the deliberate lab escape hatch).
+
+    Returns True if a warning was emitted.
+    """
+    global _INSECURE_TLS_WARNED
+    if _INSECURE_TLS_WARNED:
+        return False
+    if not rustchain_verify_ssl_is_off(cfg):
+        return False
+    if os.environ.get("BEACON_INSECURE_SKIP_TLS_VERIFY", "").strip().lower() in ("1", "true", "yes"):
+        return False
+    _INSECURE_TLS_WARNED = True
+    out = stream if stream is not None else sys.stderr
+    print(
+        "WARNING: rustchain.verify_ssl is false in "
+        f"{_config_path()} -- TLS certificate verification is OFF for RustChain "
+        "calls (balance, pay, anchor). Older `beacon init` wrote this by default. "
+        "Set \"verify_ssl\": true (or delete the key) unless you are talking to a "
+        "self-signed lab node.",
+        file=out,
+    )
+    return True
 
 
 def _config_path() -> Path:
@@ -23,9 +79,13 @@ def load_config() -> Dict[str, Any]:
     if not path.exists():
         return {}
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        cfg = json.loads(path.read_text(encoding="utf-8"))
     except Exception:
         return {}
+    if not isinstance(cfg, dict):
+        return {}
+    warn_if_insecure_rustchain_tls(cfg)
+    return cfg
 
 
 def write_default_config(overwrite: bool = False) -> Path:

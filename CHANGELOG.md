@@ -7,6 +7,11 @@ For the current state of the protocol, see [README.md](README.md). For mechanism
 
 ---
 
+## Unreleased
+
+### Security
+- `beacon init` no longer writes `"verify_ssl": false` into new configs; the template now matches the verified-TLS default. Existing configs that still carry `verify_ssl: false` get a one-time stderr warning at load (suppressed by `BEACON_INSECURE_SKIP_TLS_VERIFY`, the deliberate lab opt-out). Complements [#925](https://github.com/Scottcjn/beacon-skill/pull/925) by @xxzzzzy, which flips the code default.
+
 ## [2.17.0] - 2026-06-28
 
 ### Added
