@@ -49,12 +49,29 @@ function run(cmd, args, opts = {}) {
   }
 }
 
+function getBootstrapPython(platform = os.platform(), env = process.env) {
+  if (env.PYTHON) return { cmd: env.PYTHON, args: [] };
+  if (platform === 'win32') {
+    const pyCheck = spawnSync('py', ['-3', '--version']);
+    if (!pyCheck.error && pyCheck.status === 0) {
+      return { cmd: 'py', args: ['-3'] };
+    }
+    return { cmd: 'python', args: [] };
+  }
+  const py3Check = spawnSync('python3', ['--version']);
+  if (!py3Check.error && py3Check.status === 0) {
+    return { cmd: 'python3', args: [] };
+  }
+  return { cmd: 'python', args: [] };
+}
+
 function ensureVenv() {
   if (haveVenv()) return;
 
   ensureDir(INSTALL_DIR);
   log(`Creating venv at ${VENV_DIR}`);
-  run('python3', ['-m', 'venv', VENV_DIR]);
+  const bootstrap = getBootstrapPython();
+  run(bootstrap.cmd, [...bootstrap.args, '-m', 'venv', VENV_DIR]);
 }
 
 function ensureDeps() {
@@ -97,9 +114,18 @@ function main() {
   process.exit(typeof r.status === 'number' ? r.status : 1);
 }
 
-try {
-  main();
-} catch (e) {
-  log(String(e && e.message ? e.message : e));
-  process.exit(1);
+if (require.main === module) {
+  try {
+    main();
+  } catch (e) {
+    log(String(e && e.message ? e.message : e));
+    process.exit(1);
+  }
 }
+
+module.exports = {
+  getBootstrapPython,
+  pythonBin,
+  haveVenv,
+  ensureDir,
+};
