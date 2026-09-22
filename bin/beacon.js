@@ -11,8 +11,12 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const VERSION = '1.0.0';
 const PKG_ROOT = path.join(__dirname, '..');
+let VERSION = '1.0.0';
+try {
+  const pkg = require(path.join(PKG_ROOT, 'package.json'));
+  if (pkg && pkg.version) VERSION = pkg.version;
+} catch (_) {}
 
 const INSTALL_DIR = path.join(os.homedir(), '.beacon', 'npm');
 const VENV_DIR = path.join(INSTALL_DIR, 'venv');
