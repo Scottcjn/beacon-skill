@@ -4684,6 +4684,15 @@ def cmd_anchor_list(args: argparse.Namespace) -> int:
 
 def cmd_dashboard(args: argparse.Namespace) -> int:
     try:
+        import textual  # noqa: F401
+    except ImportError:
+        print(
+            "beacon dashboard needs the optional 'textual' package.\n"
+            "Install it with: pip install \"beacon-skill[dashboard]\"",
+            file=sys.stderr,
+        )
+        return 1
+    try:
         from .dashboard import run_dashboard
     except Exception as e:
         print(json.dumps({"error": str(e)}), file=sys.stderr)
