@@ -1,4 +1,4 @@
-# tools/moltbook_migrate/moltbook_api.py
+# beacon_skill/moltbook_migrate/moltbook_api.py
 """
 Moltbook API Client — Fetch public profile metadata from BoTTube (formerly Moltbook).
 

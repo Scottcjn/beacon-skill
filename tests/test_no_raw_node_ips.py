@@ -22,7 +22,7 @@ from pathlib import Path
 import pytest
 
 import mcp_server.beacon_lookup as beacon_lookup
-import tools.moltbook_migrate.migrate as migrate
+import beacon_skill.moltbook_migrate.migrate as migrate
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 HOSTNAME_DEFAULT = "https://rustchain.org/beacon/atlas"

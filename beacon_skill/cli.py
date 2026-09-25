@@ -6066,7 +6066,7 @@ def main(argv: Optional[List[str]] = None) -> None:
 
     # ── migrate: Moltbook → Beacon ──────────────────────────────────────────
     def cmd_migrate(args: argparse.Namespace) -> int:
-        from tools.moltbook_migrate.cli import main as migrate_main
+        from .moltbook_migrate.cli import main as migrate_main
         # Reconstruct argv-style arguments for the migrate CLI
         migrate_argv = ["prog", "migrate", "--from-moltbook", args.from_moltbook]
         if args.verbose:

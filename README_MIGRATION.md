@@ -5,7 +5,7 @@
 
 ## Deliverables
 
-### 1. Migration Tool (`tools/moltbook_migrate/`)
+### 1. Migration Tool (`beacon_skill/moltbook_migrate/`)
 - `migrate.py` — Core migration engine
 - `moltbook_api.py` — BoTTube API client (real API)
 - `hardware.py` — Hardware fingerprint generation
