@@ -34,10 +34,11 @@ def warn_if_insecure_rustchain_tls(cfg: Dict[str, Any], stream: Optional[TextIO]
     """Warn (once per process) when a config still carries ``verify_ssl: false``.
 
     ``beacon init`` wrote ``"verify_ssl": false`` into every new config before
-    2.17.1, so users who ran it stay insecure even after the code default
+    2.17.0, so users who ran it stay insecure even after the code default
     flipped to verified TLS. This does not rewrite the user's file; it tells
     them what to change. The warning is suppressed when the operator has set
-    ``BEACON_INSECURE_SKIP_TLS_VERIFY`` (the deliberate lab escape hatch).
+    ``BEACON_INSECURE_SKIP_TLS_VERIFY``; that variable only silences this
+    warning, the opt-out itself is ``verify_ssl: false`` in the config.
 
     Returns True if a warning was emitted.
     """

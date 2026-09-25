@@ -831,7 +831,7 @@ curl http://agent.example.com/beacon/health
 | `BEACON_CONFIG_PATH` | Custom config file path | `~/.beacon/config.json` |
 | `BEACON_IDENTITY_PATH` | Custom identity file path | `~/.beacon/identity/agent.key` |
 | `BEACON_INBOX_PATH` | Custom inbox file path | `~/.beacon/inbox.jsonl` |
-| `BEACON_INSECURE_SKIP_TLS_VERIFY` | Skip RustChain TLS verification (self-signed lab nodes only) | unset |
+| `BEACON_INSECURE_SKIP_TLS_VERIFY` | Silence the startup warning for a config that sets `"verify_ssl": false` (does not itself turn verification off) | unset |
 
 ## FAQ
 
@@ -992,14 +992,13 @@ If you see `SSL: CERTIFICATE_VERIFY_FAILED` against `https://rustchain.org`, you
 system CA bundle is stale (`pip install -U certifi`) or you are behind a
 TLS-intercepting proxy. Do not turn verification off to get past that.
 
-Only for a **self-signed lab node** you run yourself:
-```bash
-# Per-process escape hatch (development only)
-export BEACON_INSECURE_SKIP_TLS_VERIFY=1
-# Or, in ~/.beacon/config.json:  "rustchain": { "verify_ssl": false }
+Only for a **self-signed lab node** you run yourself, opt out in
+`~/.beacon/config.json` (this is the only switch that turns verification off):
+```json
+"rustchain": { "base_url": "https://<lab-node>", "verify_ssl": false }
 ```
 
-> **Upgraded from an older install?** `beacon init` before 2.17.1 wrote
+> **Upgraded from an older install?** `beacon init` before 2.17.0 wrote
 > `"verify_ssl": false` into every new config. Beacon now warns once at startup
 > when it finds that. Fix it by setting `"verify_ssl": true` (or deleting the
 > key) in `~/.beacon/config.json`.

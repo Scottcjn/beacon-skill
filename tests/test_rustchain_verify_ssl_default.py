@@ -87,3 +87,24 @@ def test_no_insecure_verify_ssl_default_left_in_cli():
     src = inspect.getsource(cli)
     assert '"verify_ssl", False' not in src
     assert '"verify_ssl", default=False' not in src
+
+
+def test_tls_failure_is_a_short_message_not_a_traceback(monkeypatch, capsys):
+    import requests
+
+    class _BadCertClient(_FakeClient):
+        def balance(self, address):
+            req = requests.Request("GET", "https://50.28.86.131/wallet/balance").prepare()
+            raise requests.exceptions.SSLError("CERTIFICATE_VERIFY_FAILED", request=req)
+
+    monkeypatch.setattr(cli, "RustChainClient", _BadCertClient)
+    _use_config(monkeypatch, {})
+
+    with pytest.raises(SystemExit) as exit_info:
+        cli.main(["rustchain", "balance", "addr"])
+
+    assert exit_info.value.code == 1
+    err = capsys.readouterr().err
+    assert "TLS certificate verification failed for 50.28.86.131" in err
+    assert "SSL Certificate Errors" in err
+    assert "Traceback" not in err

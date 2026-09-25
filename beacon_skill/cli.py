@@ -4,6 +4,9 @@ import sys
 import threading
 import time
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse
+
+import requests
 
 from . import __version__
 from .codec import decode_envelopes, encode_envelope, verify_envelope
@@ -6103,7 +6106,16 @@ def main(argv: Optional[List[str]] = None) -> None:
 
     args = p.parse_args(argv_list)
     args.json = json_mode or bool(getattr(args, "json", False))
-    rc = args.func(args)
+    try:
+        rc = args.func(args)
+    except requests.exceptions.SSLError as exc:
+        host = urlparse(getattr(exc.request, "url", "") or "").hostname or "the server"
+        print(
+            f"TLS certificate verification failed for {host}. "
+            "See README 'SSL Certificate Errors'.",
+            file=sys.stderr,
+        )
+        rc = 1
     raise SystemExit(rc)
 
 
