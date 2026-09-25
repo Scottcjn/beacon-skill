@@ -6,6 +6,13 @@ import time
 import unittest
 import multiprocessing
 
+import pytest
+
+# Optional extra: pip install "beacon-skill[webhook]"
+pytest.importorskip("fastapi")
+pytest.importorskip("pydantic")
+pytest.importorskip("uvicorn")
+
 from beacon_skill.codec import decode_envelopes, encode_envelope
 from beacon_skill.guard import clear_nonce_cache
 from beacon_skill.identity import AgentIdentity
