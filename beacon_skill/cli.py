@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional
 
 from . import __version__
 from .codec import decode_envelopes, encode_envelope, verify_envelope
-from .config import load_config, write_default_config
+from .config import load_config, rustchain_verify_ssl_is_off, write_default_config
 from .storage import append_jsonl
 from .transports import (
     BoTTubeClient,
@@ -1430,7 +1430,7 @@ def cmd_rustchain_balance(args: argparse.Namespace) -> int:
     cfg = load_config()
     client = RustChainClient(
         base_url=_cfg_get(cfg, "rustchain", "base_url", default="https://rustchain.org"),
-        verify_ssl=bool(_cfg_get(cfg, "rustchain", "verify_ssl", default=False)),
+        verify_ssl=not rustchain_verify_ssl_is_off(cfg),
     )
     result = client.balance(args.address)
     print(json.dumps(result, indent=2))
@@ -1448,7 +1448,7 @@ def cmd_rustchain_pay(args: argparse.Namespace) -> int:
 
     client = RustChainClient(
         base_url=_cfg_get(cfg, "rustchain", "base_url", default="https://rustchain.org"),
-        verify_ssl=bool(_cfg_get(cfg, "rustchain", "verify_ssl", default=False)),
+        verify_ssl=not rustchain_verify_ssl_is_off(cfg),
     )
     payload = client.sign_transfer(
         private_key_hex=priv,
@@ -2692,7 +2692,7 @@ def cmd_loop(args: argparse.Namespace) -> int:
             rc_cfg = cfg.get("rustchain", {})
             rc_client = RustChainClient(
                 base_url=rc_cfg.get("base_url", "https://rustchain.org"),
-                verify_ssl=rc_cfg.get("verify_ssl", False),
+                verify_ssl=not rustchain_verify_ssl_is_off(cfg),
             )
             kp = None
             pk_hex = rc_cfg.get("private_key_hex", "")
@@ -3648,7 +3648,7 @@ def _build_anchor_mgr(args: argparse.Namespace):
     rc_cfg = cfg.get("rustchain", {})
     rc_client = RustChainClient(
         base_url=rc_cfg.get("base_url", "https://rustchain.org"),
-        verify_ssl=rc_cfg.get("verify_ssl", False),
+        verify_ssl=not rustchain_verify_ssl_is_off(cfg),
     )
     kp = None
     pk_hex = rc_cfg.get("private_key_hex", "")
