@@ -4726,7 +4726,7 @@ def main(argv: Optional[List[str]] = None) -> None:
             print(__version__)
         raise SystemExit(0)
 
-    p = argparse.ArgumentParser(prog="beacon", description="Beacon 2.4.0 - autonomous agent economy: presence, trust, feed, rules, tasks, memory, outbox, executor, mayday, heartbeat, accord")
+    p = argparse.ArgumentParser(prog="beacon", description=f"Beacon {__version__} - autonomous agent economy: presence, trust, feed, rules, tasks, memory, outbox, executor, mayday, heartbeat, accord")
     p.add_argument("--version", action="store_true", help="Show Beacon version and exit")
     p.add_argument("--json", action="store_true", help="Output command results as JSON")
     sub = p.add_subparsers(dest="cmd", required=True)
