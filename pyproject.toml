@@ -9,7 +9,7 @@ description = "Beacon - the AI agent orchestrator. 13 transports (BoTTube, Moltb
 readme = "README.md"
 license = {text = "MIT"}
 authors = [{name = "Elyan Labs", email = "scott@elyanlabs.ai"}]
-requires-python = ">=3.8"
+requires-python = ">=3.9"
 dependencies = [
   "requests>=2.25",
   "cryptography>=41",
