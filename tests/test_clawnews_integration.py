@@ -51,17 +51,23 @@ class TestClawNewsIntegration(unittest.TestCase):
             self.fail(f"Command timed out: {' '.join(args)}")
 
     def _parse_json_output(self, output):
-        """Parse JSON output, handling multiple JSON objects."""
-        lines = output.strip().split('\n')
+        """Parse JSON output, handling multiple (possibly pretty-printed) JSON
+        values and skipping any non-JSON text between them."""
+        decoder = json.JSONDecoder()
         results = []
-        for line in lines:
-            line = line.strip()
-            if line:
-                try:
-                    results.append(json.loads(line))
-                except json.JSONDecodeError:
-                    # Not JSON, ignore
-                    pass
+        idx = 0
+        while idx < len(output):
+            if output[idx] not in "[{":
+                idx += 1
+                continue
+            try:
+                value, end = decoder.raw_decode(output, idx)
+            except json.JSONDecodeError:
+                # Not JSON, ignore
+                idx += 1
+                continue
+            results.append(value)
+            idx = end
         return results
 
     @unittest.skip("Requires actual ClawNews API access")
@@ -217,7 +223,8 @@ class TestClawNewsResponseContracts(unittest.TestCase):
                     mock_client.get_stories.return_value = response
                     mock_factory.return_value = mock_client
                     
-                    from beacon_skill.cli import cmd_clawnews_browse, MockArgs
+                    from argparse import Namespace
+                    from beacon_skill.cli import cmd_clawnews_browse
                     
                     # Capture output
                     import io
@@ -225,7 +232,7 @@ class TestClawNewsResponseContracts(unittest.TestCase):
                     
                     stdout_capture = io.StringIO()
                     with contextlib.redirect_stdout(stdout_capture):
-                        result = cmd_clawnews_browse(MockArgs(feed="top", limit=20))
+                        result = cmd_clawnews_browse(Namespace(feed="top", limit=20))
                     
                     self.assertEqual(result, 0)
                     output = stdout_capture.getvalue()
