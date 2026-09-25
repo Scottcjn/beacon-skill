@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 # beacon_skill/moltbook_migrate/__init__.py
 """
 Moltbook Migration Tool — Beacon Protocol Migration Path.
