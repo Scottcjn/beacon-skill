@@ -30,6 +30,23 @@ def _signed_env(ident, *, include_pubkey=True, nonce=None):
     return text, decode_envelopes(text)[0]
 
 
+def _signed_env_without_agent_id(ident, *, agent_id_value=None, nonce=None):
+    """Envelope signed by ``ident`` that omits (or blanks) agent_id.
+
+    encode_envelope always sets agent_id, so build the payload by hand the way
+    an attacker holding a revoked private key could.
+    """
+    from beacon_skill.codec import _canonical_json
+
+    env = {"kind": "hello", "ts": int(time.time()), "pubkey": ident.public_key_hex}
+    if nonce:
+        env["nonce"] = nonce
+    if agent_id_value is not None:
+        env["agent_id"] = agent_id_value
+    env["sig"] = ident.sign_hex(_canonical_json(env))
+    return env
+
+
 class _TmpHome(unittest.TestCase):
     def setUp(self):
         self._tmp_home = tempfile.mkdtemp(prefix="beacon_revoke_")
@@ -60,6 +77,29 @@ class TestCodecRevocation(unittest.TestCase):
         _, env = _signed_env(ident, include_pubkey=True)
         keys = {ident.agent_id: {"pubkey_hex": ident.public_key_hex, "revoked": False}}
         self.assertIs(verify_envelope(env, known_keys=keys), True)
+
+
+    def test_revoked_key_rejected_when_agent_id_missing(self):
+        ident = AgentIdentity.generate()
+        env = _signed_env_without_agent_id(ident)
+        keys = {ident.agent_id: {"pubkey_hex": ident.public_key_hex, "revoked": True}}
+        # Sanity: the hand-built envelope is otherwise valid.
+        self.assertIs(verify_envelope(env, known_keys={}), True)
+        self.assertIs(verify_envelope(env, known_keys=keys), False)
+
+    def test_revoked_key_rejected_when_agent_id_empty_or_none(self):
+        ident = AgentIdentity.generate()
+        keys = {ident.agent_id: {"pubkey_hex": ident.public_key_hex, "revoked": True}}
+        for value in ("", None):
+            env = _signed_env_without_agent_id(ident, agent_id_value=value)
+            self.assertIs(verify_envelope(env, known_keys=keys), False, value)
+
+    def test_revoked_pubkey_rejected_even_if_stored_under_other_id(self):
+        # Revocation is matched on the key itself too, not only on agent ids.
+        ident = AgentIdentity.generate()
+        env = _signed_env_without_agent_id(ident)
+        keys = {"legacy-alias": {"pubkey_hex": ident.public_key_hex.upper(), "revoked": True}}
+        self.assertIs(verify_envelope(env, known_keys=keys), False)
 
 
 class TestInboxRevocation(_TmpHome):
@@ -120,6 +160,29 @@ class TestWebhookRevocation(_TmpHome):
         self.assertEqual(status, 400)
         self.assertFalse(body["results"][0]["accepted"])
         self.assertEqual(body["results"][0]["reason"], "signature_invalid")
+
+    def test_revoked_sender_without_agent_id_rejected(self):
+        from beacon_skill.inbox import read_inbox
+
+        ident = AgentIdentity.generate()
+        key_management.trust_key(ident.agent_id, ident.public_key_hex)
+        key_management.revoke_key(ident.agent_id, "compromised")
+        env = _signed_env_without_agent_id(ident, nonce="revokednoid01")
+
+        status, body = self._post(env)
+        self.assertEqual(status, 400)
+        self.assertFalse(body["results"][0]["accepted"])
+        self.assertEqual(body["results"][0]["reason"], "signature_invalid")
+        self.assertEqual(read_inbox(), [])
+
+    def test_falsy_malformed_sig_rejected_not_legacy(self):
+        for i, bad_sig in enumerate(([], {}, 0, "")):
+            env = {"agent_id": "bcn_x", "pubkey": "ab" * 32, "sig": bad_sig,
+                   "kind": "hello", "nonce": f"falsysig{i:04d}", "ts": int(time.time())}
+            status, body = self._post(env)
+            self.assertEqual(status, 400, bad_sig)
+            self.assertFalse(body["results"][0]["accepted"], bad_sig)
+            self.assertEqual(body["results"][0]["reason"], "signature_invalid", bad_sig)
 
     def test_known_sender_without_embedded_pubkey_accepted(self):
         # Exercises the metadata-shaped known_keys path end to end: this

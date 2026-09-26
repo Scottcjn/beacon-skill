@@ -97,7 +97,7 @@ class FastAPIWebhookServer:
                 reason = "ok"
                 
                 # Security Gates
-                if env.get("sig"):
+                if env.get("sig") is not None:
                     if verified is False:
                         reason = "signature_invalid"
                     elif verified is None:

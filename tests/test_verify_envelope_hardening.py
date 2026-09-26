@@ -58,6 +58,30 @@ class TestVerifyEnvelopeMalformedInput(unittest.TestCase):
         self.assertIs(verify_envelope({"pubkey": "ab" * 32, "sig": ["x"]}), False)
         self.assertIs(verify_envelope({"agent_id": 7, "pubkey": "ab" * 32, "sig": "00"}), False)
 
+    def test_falsy_malformed_sig_returns_false(self):
+        for bad in ([], {}, 0, False, ""):
+            env = {"agent_id": "bcn_x", "pubkey": "ab" * 32, "sig": bad}
+            self.assertIs(verify_envelope(env), False, bad)
+
+    def test_absent_or_none_sig_is_unsigned(self):
+        self.assertIsNone(verify_envelope({"agent_id": "bcn_x", "pubkey": "ab" * 32}))
+        self.assertIsNone(verify_envelope({"agent_id": "bcn_x", "pubkey": "ab" * 32, "sig": None}))
+
+    def test_falsy_non_string_pubkey_returns_false(self):
+        ident = AgentIdentity.generate()
+        env = _signed(ident, include_pubkey=False)
+        known = {ident.agent_id: _meta(ident.public_key_hex)}
+        for bad in (0, False, [], {}):
+            broken = dict(env, pubkey=bad)
+            self.assertIs(verify_envelope(broken), False, bad)
+            # Must not silently fall back to the pinned key either.
+            self.assertIs(verify_envelope(broken, known_keys=known), False, bad)
+
+    def test_wrong_length_sig_returns_false(self):
+        ident = AgentIdentity.generate()
+        env = _signed(ident, include_pubkey=True)
+        self.assertIs(verify_envelope(dict(env, sig=env["sig"][:-2])), False)
+
     def test_malformed_known_key_returns_false(self):
         env = {"agent_id": "bcn_abc", "sig": "00" * 64}
         self.assertIs(verify_envelope(env, known_keys={"bcn_abc": "zz"}), False)
