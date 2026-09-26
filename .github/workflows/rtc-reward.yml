@@ -16,6 +16,11 @@ jobs:
       - name: Award RTC to contributor
         continue-on-error: true  # rewards are best-effort; never gate CI
         uses: Scottcjn/rustchain-bounties/actions/rtc-reward@06f36c870b40bdd89f0f92c25826f2d2b9561fa6 # pinned 2026-09-26: skip house accounts (rustchain-bounties#17060)
+        env:
+          # The action reads GITHUB_TOKEN from env; without it every run crashed
+          # ("Error: GITHUB_TOKEN not set"), masked by continue-on-error. No
+          # beacon-skill merge reward was ever paid (52 runs, 2026-05-30..09-26).
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           # Hostname, not raw node IP: the cert is issued for rustchain.org,
           # so the IP form only works with TLS verification disabled.
