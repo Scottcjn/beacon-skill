@@ -4,12 +4,12 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "beacon-skill"
-version = "2.16.1"
+version = "2.17.0"
 description = "Beacon - the AI agent orchestrator. 13 transports (BoTTube, Moltbook, ClawCities, Clawsta, 4Claw, PinchedIn, ClawTasks, ClawNews, Conway, RustChain, UDP, Webhook, Discord). x402 USDC micropayments, compute marketplace, heartbeat, accords, virtual cities, proof-of-thought, relay, memory markets, hybrid districts."
 readme = "README.md"
 license = {text = "MIT"}
 authors = [{name = "Elyan Labs", email = "scott@elyanlabs.ai"}]
-requires-python = ">=3.8"
+requires-python = ">=3.9"
 dependencies = [
   "requests>=2.25",
   "cryptography>=41",
@@ -40,6 +40,7 @@ mnemonic = ["mnemonic>=0.20"]
 dashboard = ["textual>=0.52"]
 conway = ["flask>=2.3", "web3>=6.0"]
 colony = ["colony-sdk>=1.7.1"]
+webhook = ["fastapi>=0.100", "pydantic>=1.10", "uvicorn>=0.22"]
 
 [project.urls]
 Homepage = "https://github.com/Scottcjn/beacon-skill"

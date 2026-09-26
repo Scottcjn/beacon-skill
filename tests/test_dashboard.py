@@ -116,5 +116,25 @@ class TestDashboardHelpers(unittest.TestCase):
             shutil.rmtree(td, ignore_errors=True)
 
 
+class TestDashboardMissingTextual(unittest.TestCase):
+    def test_cli_prints_install_hint_without_traceback(self):
+        import argparse
+        import contextlib
+        import io
+        import sys
+        from unittest import mock
+
+        from beacon_skill import cli
+
+        stderr = io.StringIO()
+        # A None entry in sys.modules makes `import textual` raise ImportError.
+        with mock.patch.dict(sys.modules, {"textual": None}), contextlib.redirect_stderr(stderr):
+            rc = cli.cmd_dashboard(argparse.Namespace(interval=1.0, sound=False))
+
+        self.assertEqual(rc, 1)
+        self.assertIn('pip install "beacon-skill[dashboard]"', stderr.getvalue())
+        self.assertNotIn("Traceback", stderr.getvalue())
+
+
 if __name__ == "__main__":
     unittest.main()

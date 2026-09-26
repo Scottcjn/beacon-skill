@@ -1,4 +1,4 @@
-# tools/moltbook_migrate/migrate.py
+# beacon_skill/moltbook_migrate/migrate.py
 """
 Migration Engine — Core logic for Moltbook to Beacon Protocol migration.
 

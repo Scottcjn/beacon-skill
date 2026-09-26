@@ -10,7 +10,16 @@ For the current state of the protocol, see [README.md](README.md). For mechanism
 ## Unreleased
 
 ### Security
-- `beacon init` no longer writes `"verify_ssl": false` into new configs; the template now matches the verified-TLS default. Existing configs that still carry `verify_ssl: false` get a one-time stderr warning at load (suppressed by `BEACON_INSECURE_SKIP_TLS_VERIFY`, the deliberate lab opt-out). Complements [#925](https://github.com/Scottcjn/beacon-skill/pull/925) by @xxzzzzy, which flips the code default.
+- `beacon init` no longer writes `"verify_ssl": false` into new configs; the template now matches the verified-TLS default. Existing configs that still carry `verify_ssl: false` get a one-time stderr warning at load (silenced by `BEACON_INSECURE_SKIP_TLS_VERIFY`; the opt-out itself is `"verify_ssl": false`). Complements [#925](https://github.com/Scottcjn/beacon-skill/pull/925) by @xxzzzzy, which flips the code default.
+- **RustChain TLS is verified when `rustchain.verify_ssl` is missing** ([#950](https://github.com/Scottcjn/beacon-skill/pull/950)). All four CLI RustChain clients (`rustchain balance`, `rustchain pay`, the agent-loop anchor and the anchor manager) used to fall back to *unverified* TLS when the key was absent, and treated the string `"false"` as "verify". The only opt-out is now an explicit `"verify_ssl": false` (or `0`/`"false"`/`"no"`). A node reached by raw IP, whose certificate doesn't match, now fails closed; the CLI prints a one-line "TLS certificate verification failed for <host>" message instead of a traceback.
+
+### Fixed
+- `beacon migrate` works from an installed wheel: the Moltbook migration toolkit now ships as `beacon_skill.moltbook_migrate` ([#950](https://github.com/Scottcjn/beacon-skill/pull/950)).
+- Imports on Python 3.9 (a `tuple[...]` annotation in `trust.py`).
+
+### Changed
+- **Python 3.8 is no longer supported**; `requires-python` is now `>=3.9`.
+- New `webhook` extra (`pip install "beacon-skill[webhook]"`) installs FastAPI, Pydantic and Uvicorn for the FastAPI webhook transport.
 
 ## [2.17.0] - 2026-06-28
 
@@ -41,7 +50,7 @@ This window covers ~161 commits since `v2.16.0` (2026-03-08). Highlights:
 ### Security
 - **Mnemonic restore compatibility guard** — `beacon identity restore` now has an explicit `--legacy` path for pre-BIP39 raw-SHA256 mnemonic identities, plus `--expect-agent-id` to refuse accidental derivation mismatches. The long-running Gemini SEO relay agent is pinned to legacy derivation so this KDF hardening does not silently rotate its production `agent_id`.
 - **Reject unauthenticated relay registration via heartbeat** ([#843](https://github.com/Scottcjn/beacon-skill/pull/843), fixes [#830](https://github.com/Scottcjn/beacon-skill/issues/830)) — before this fix, `/relay/heartbeat` would auto-register an arbitrary `agent_id` for any caller with any Bearer token, returning a valid `relay_token`. That's identity spoofing wearing a heartbeat costume. The fix requires explicit prior registration before heartbeats can mint relay tokens. **All operators should update.**
-- **Hardcoded `verify=False` SSL paths removed** ([#827](https://github.com/Scottcjn/beacon-skill/issues/827), [#846](https://github.com/Scottcjn/beacon-skill/pull/846)) — SSL verification is now on by default everywhere. The opt-out is environment-variable controlled (`BEACON_VERIFY_SSL=0`) for lab use, not silently off in production code.
+- **Hardcoded `verify=False` SSL paths removed** ([#827](https://github.com/Scottcjn/beacon-skill/issues/827), [#846](https://github.com/Scottcjn/beacon-skill/pull/846)) — SSL verification is now on by default everywhere. The opt-out for lab use is an explicit `"verify_ssl": false` in the config, not silently off in production code.
 
 ### Fixed
 - **Heartbeat timeout state machine** ([#811](https://github.com/Scottcjn/beacon-skill/issues/811), [#847](https://github.com/Scottcjn/beacon-skill/pull/847)) — heartbeat timeout was not being reset after a successful pong, so a transient stall would mark a healthy peer permanently degraded. Now resets cleanly on pong.

@@ -3,7 +3,7 @@
 import json
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from .storage import _dir
 
@@ -240,7 +240,7 @@ class TrustManager:
         """Check if an agent is hard-blocked."""
         return self.review_status(agent_id) == "blocked"
 
-    def can_interact(self, agent_id: str) -> tuple[bool, str]:
+    def can_interact(self, agent_id: str) -> Tuple[bool, str]:
         """Return whether an agent can be contacted and why not if blocked/held."""
         status = self.review_status(agent_id)
         if status == "blocked":

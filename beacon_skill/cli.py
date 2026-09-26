@@ -4,10 +4,13 @@ import sys
 import threading
 import time
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse
+
+import requests
 
 from . import __version__
 from .codec import decode_envelopes, encode_envelope, verify_envelope
-from .config import load_config, write_default_config
+from .config import load_config, rustchain_verify_ssl_is_off, write_default_config
 from .storage import append_jsonl
 from .transports import (
     BoTTubeClient,
@@ -1430,7 +1433,7 @@ def cmd_rustchain_balance(args: argparse.Namespace) -> int:
     cfg = load_config()
     client = RustChainClient(
         base_url=_cfg_get(cfg, "rustchain", "base_url", default="https://rustchain.org"),
-        verify_ssl=bool(_cfg_get(cfg, "rustchain", "verify_ssl", default=False)),
+        verify_ssl=not rustchain_verify_ssl_is_off(cfg),
     )
     result = client.balance(args.address)
     print(json.dumps(result, indent=2))
@@ -1448,7 +1451,7 @@ def cmd_rustchain_pay(args: argparse.Namespace) -> int:
 
     client = RustChainClient(
         base_url=_cfg_get(cfg, "rustchain", "base_url", default="https://rustchain.org"),
-        verify_ssl=bool(_cfg_get(cfg, "rustchain", "verify_ssl", default=False)),
+        verify_ssl=not rustchain_verify_ssl_is_off(cfg),
     )
     payload = client.sign_transfer(
         private_key_hex=priv,
@@ -2692,7 +2695,7 @@ def cmd_loop(args: argparse.Namespace) -> int:
             rc_cfg = cfg.get("rustchain", {})
             rc_client = RustChainClient(
                 base_url=rc_cfg.get("base_url", "https://rustchain.org"),
-                verify_ssl=rc_cfg.get("verify_ssl", False),
+                verify_ssl=not rustchain_verify_ssl_is_off(cfg),
             )
             kp = None
             pk_hex = rc_cfg.get("private_key_hex", "")
@@ -3648,7 +3651,7 @@ def _build_anchor_mgr(args: argparse.Namespace):
     rc_cfg = cfg.get("rustchain", {})
     rc_client = RustChainClient(
         base_url=rc_cfg.get("base_url", "https://rustchain.org"),
-        verify_ssl=rc_cfg.get("verify_ssl", False),
+        verify_ssl=not rustchain_verify_ssl_is_off(cfg),
     )
     kp = None
     pk_hex = rc_cfg.get("private_key_hex", "")
@@ -4684,6 +4687,15 @@ def cmd_anchor_list(args: argparse.Namespace) -> int:
 
 def cmd_dashboard(args: argparse.Namespace) -> int:
     try:
+        import textual  # noqa: F401
+    except ImportError:
+        print(
+            "beacon dashboard needs the optional 'textual' package.\n"
+            "Install it with: pip install \"beacon-skill[dashboard]\"",
+            file=sys.stderr,
+        )
+        return 1
+    try:
         from .dashboard import run_dashboard
     except Exception as e:
         print(json.dumps({"error": str(e)}), file=sys.stderr)
@@ -4726,7 +4738,7 @@ def main(argv: Optional[List[str]] = None) -> None:
             print(__version__)
         raise SystemExit(0)
 
-    p = argparse.ArgumentParser(prog="beacon", description="Beacon 2.4.0 - autonomous agent economy: presence, trust, feed, rules, tasks, memory, outbox, executor, mayday, heartbeat, accord")
+    p = argparse.ArgumentParser(prog="beacon", description=f"Beacon {__version__} - autonomous agent economy: presence, trust, feed, rules, tasks, memory, outbox, executor, mayday, heartbeat, accord")
     p.add_argument("--version", action="store_true", help="Show Beacon version and exit")
     p.add_argument("--json", action="store_true", help="Output command results as JSON")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -6066,7 +6078,7 @@ def main(argv: Optional[List[str]] = None) -> None:
 
     # ── migrate: Moltbook → Beacon ──────────────────────────────────────────
     def cmd_migrate(args: argparse.Namespace) -> int:
-        from tools.moltbook_migrate.cli import main as migrate_main
+        from .moltbook_migrate.cli import main as migrate_main
         # Reconstruct argv-style arguments for the migrate CLI
         migrate_argv = ["prog", "migrate", "--from-moltbook", args.from_moltbook]
         if args.verbose:
@@ -6094,7 +6106,16 @@ def main(argv: Optional[List[str]] = None) -> None:
 
     args = p.parse_args(argv_list)
     args.json = json_mode or bool(getattr(args, "json", False))
-    rc = args.func(args)
+    try:
+        rc = args.func(args)
+    except requests.exceptions.SSLError as exc:
+        host = urlparse(getattr(exc.request, "url", "") or "").hostname or "the server"
+        print(
+            f"TLS certificate verification failed for {host}. "
+            "See README 'SSL Certificate Errors'.",
+            file=sys.stderr,
+        )
+        rc = 1
     raise SystemExit(rc)
 
 

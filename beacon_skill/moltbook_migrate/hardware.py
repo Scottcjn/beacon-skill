@@ -1,4 +1,4 @@
-# tools/moltbook_migrate/hardware.py
+# beacon_skill/moltbook_migrate/hardware.py
 """
 Hardware Fingerprinting — Machine identification for Beacon Protocol.
 

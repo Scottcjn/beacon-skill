@@ -1,4 +1,4 @@
-# tools/moltbook_migrate/tests/test_migrate.py
+# tests/test_migrate.py
 """
 Tests for migrate.py — Moltbook to Beacon Protocol migration engine.
 """
@@ -10,12 +10,12 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from tools.moltbook_migrate.hardware import (
+from beacon_skill.moltbook_migrate.hardware import (
     HardwareFingerprint,
     HardwareFingerprinter,
     HardwareFingerprintError,
 )
-from tools.moltbook_migrate.migrate import (
+from beacon_skill.moltbook_migrate.migrate import (
     AgentFolioLink,
     AgentFolioLinkError,
     BeaconID,
@@ -26,7 +26,7 @@ from tools.moltbook_migrate.migrate import (
     MoltbookMigrator,
     ProvenanceRecord,
 )
-from tools.moltbook_migrate.moltbook_api import (
+from beacon_skill.moltbook_migrate.moltbook_api import (
     MoltbookAPIError,
     MoltbookClient,
     MoltbookKarmaHistory,
@@ -329,7 +329,7 @@ class TestHardwareFingerprint:
 class TestMoltbookMigratorSuccess:
     """Tests for successful migration scenarios."""
 
-    @patch("tools.moltbook_migrate.migrate.HardwareFingerprinter")
+    @patch("beacon_skill.moltbook_migrate.migrate.HardwareFingerprinter")
     def test_migrate_success(
         self,
         mock_fingerprinter_cls,
@@ -345,7 +345,7 @@ class TestMoltbookMigratorSuccess:
         mock_fingerprinter_cls.return_value = mock_fingerprinter
 
         # Mock HTTP calls for beacon registration and AgentFolio linking
-        with patch("tools.moltbook_migrate.migrate.requests.post") as mock_post:
+        with patch("beacon_skill.moltbook_migrate.migrate.requests.post") as mock_post:
             mock_response = MagicMock()
             mock_response.status_code = 200
             mock_response.json.return_value = {
@@ -373,8 +373,8 @@ class TestMoltbookMigratorSuccess:
         assert len(result.steps_completed) > 0
         assert result.error_message is None
 
-    @patch("tools.moltbook_migrate.migrate.MoltbookClient")
-    @patch("tools.moltbook_migrate.migrate.HardwareFingerprinter")
+    @patch("beacon_skill.moltbook_migrate.migrate.MoltbookClient")
+    @patch("beacon_skill.moltbook_migrate.migrate.HardwareFingerprinter")
     def test_migrate_dry_run(
         self,
         mock_fingerprinter_cls,
@@ -438,8 +438,8 @@ class TestMoltbookMigratorErrors:
         assert result.success is False
         assert result.error_message is not None
 
-    @patch("tools.moltbook_migrate.migrate.MoltbookClient")
-    @patch("tools.moltbook_migrate.migrate.HardwareFingerprinter")
+    @patch("beacon_skill.moltbook_migrate.migrate.MoltbookClient")
+    @patch("beacon_skill.moltbook_migrate.migrate.HardwareFingerprinter")
     def test_migrate_api_error(self, mock_fingerprinter_cls, mock_client_cls):
         """Test migration when Moltbook API returns error."""
         mock_client = MagicMock()
@@ -458,8 +458,8 @@ class TestMoltbookMigratorErrors:
         assert result.success is False
         assert result.error_message is not None
 
-    @patch("tools.moltbook_migrate.migrate.MoltbookClient")
-    @patch("tools.moltbook_migrate.migrate.HardwareFingerprinter")
+    @patch("beacon_skill.moltbook_migrate.migrate.MoltbookClient")
+    @patch("beacon_skill.moltbook_migrate.migrate.HardwareFingerprinter")
     def test_migrate_hardware_fingerprint_error(
         self, mock_fingerprinter_cls, mock_client_cls, mock_moltbook_profile
     ):
@@ -479,8 +479,8 @@ class TestMoltbookMigratorErrors:
         assert result.success is False
         assert result.error_message is not None
 
-    @patch("tools.moltbook_migrate.migrate.MoltbookClient")
-    @patch("tools.moltbook_migrate.migrate.HardwareFingerprinter")
+    @patch("beacon_skill.moltbook_migrate.migrate.MoltbookClient")
+    @patch("beacon_skill.moltbook_migrate.migrate.HardwareFingerprinter")
     def test_migrate_beacon_registration_error(
         self,
         mock_fingerprinter_cls,
@@ -493,7 +493,7 @@ class TestMoltbookMigratorErrors:
         mock_fingerprinter.generate.return_value = mock_hardware_fingerprint
         mock_fingerprinter_cls.return_value = mock_fingerprinter
 
-        with patch("tools.moltbook_migrate.migrate.requests.post") as mock_post:
+        with patch("beacon_skill.moltbook_migrate.migrate.requests.post") as mock_post:
             mock_response = MagicMock()
             mock_response.status_code = 500
             mock_response.text = "Internal Server Error"
