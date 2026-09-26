@@ -209,7 +209,8 @@ def verify_envelope(
 
     Returns:
       True  — signature valid
-      False — signature invalid (tampered, wrong key, malformed key/signature)
+      False — signature invalid (tampered, wrong key, malformed key/signature,
+              or the agent's key is marked revoked in known_keys)
       None  — cannot verify (v1, no sig, no known key)
 
     known_keys: dict mapping agent_id -> public_key_hex, or agent_id -> key
@@ -230,7 +231,11 @@ def verify_envelope(
     if not isinstance(agent_id, str):
         return False
 
-    known_pubkey, _revoked = _known_key_entry(known_keys, agent_id)
+    known_pubkey, revoked = _known_key_entry(known_keys, agent_id)
+    if revoked:
+        # A locally revoked key must never verify, even when the envelope
+        # embeds the (still mathematically valid) public key itself.
+        return False
 
     # Try to find the public key: embedded pubkey or known_keys cache.
     pubkey_hex = envelope.get("pubkey") or known_pubkey

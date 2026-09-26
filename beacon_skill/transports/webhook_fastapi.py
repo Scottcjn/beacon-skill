@@ -91,7 +91,7 @@ class FastAPIWebhookServer:
 
             for env in envelopes:
                 _learn_key_from_envelope(env, known_keys)
-                verified = verify_envelope(env, known_keys={k: v["pubkey_hex"] for k, v in known_keys.items()})
+                verified = verify_envelope(env, known_keys=known_keys)
                 
                 accepted_env = False
                 reason = "ok"

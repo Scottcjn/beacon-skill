@@ -122,7 +122,7 @@ def read_inbox(
             known_keys = _learn_key_from_envelope(env, known_keys)
 
             # Verify signature.
-            verified = verify_envelope(env, known_keys={k: v["pubkey_hex"] for k, v in known_keys.items()})
+            verified = verify_envelope(env, known_keys=known_keys)
             nonce = env.get("nonce", "")
             is_read = nonce in read_nonces if nonce else False
 
