@@ -6090,6 +6090,23 @@ def main(argv: Optional[List[str]] = None) -> None:
     migrate_p.add_argument("--dry-run", action="store_true", help="Simulate without making changes")
     migrate_p.set_defaults(func=cmd_migrate)
 
+    # ── MCP Server ──
+    def cmd_mcp(args: argparse.Namespace) -> int:
+        try:
+            import asyncio
+            from mcp_server.server import main as mcp_main
+            asyncio.run(mcp_main())
+            return 0
+        except ImportError as e:
+            sys.stderr.write(
+                f"Error starting MCP server: {e}\n"
+                f"Ensure mcp dependencies are installed: pip install mcp\n"
+            )
+            return 1
+
+    mcp_p = sub.add_parser("mcp", help="Start Beacon MCP server (stdio transport) for Claude Code and agent orchestrators")
+    mcp_p.set_defaults(func=cmd_mcp)
+
     register_agentmatrix_parser(sub)
 
     args = p.parse_args(argv_list)
