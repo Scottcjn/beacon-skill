@@ -45,11 +45,22 @@ def _learn_key_from_envelope(env: Dict[str, Any], keys: Dict[str, Dict[str, Any]
 
     if not agent_id or not pubkey:
         return keys
+    # Envelope fields are attacker-controlled: ignore anything that is not a
+    # well-formed 32-byte Ed25519 key instead of raising, so one malformed
+    # envelope cannot break every subsequent read_inbox() / webhook request.
+    if not isinstance(agent_id, str) or not isinstance(pubkey, str):
+        return keys
+    try:
+        pubkey_bytes = bytes.fromhex(pubkey)
+    except ValueError:
+        return keys
+    if len(pubkey_bytes) != 32:
+        return keys
 
     from .identity import agent_id_from_pubkey
 
     # Verify agent_id matches pubkey
-    expected = agent_id_from_pubkey(bytes.fromhex(pubkey))
+    expected = agent_id_from_pubkey(pubkey_bytes)
     if expected != agent_id:
         return keys  # Invalid: agent_id doesn't match pubkey
 
