@@ -180,48 +180,137 @@ def decode_envelopes(text: str) -> List[Dict[str, Any]]:
     return out
 
 
+def _known_key_entry(
+    known_keys: Optional[Dict[str, Any]], agent_id: str
+) -> Tuple[Optional[str], bool]:
+    """Look up ``agent_id`` in ``known_keys`` and return ``(pubkey_hex, revoked)``.
+
+    ``known_keys`` values may be either a bare public-key hex string (legacy
+    shape) or the metadata dict stored by ``key_management`` (``pubkey_hex``,
+    ``revoked``, ...). Callers such as the CLI UDP listener and the stdlib
+    webhook server pass the metadata shape straight from ``load_known_keys()``.
+    """
+    if not known_keys or not agent_id:
+        return None, False
+    entry = known_keys.get(agent_id)
+    if isinstance(entry, str):
+        return entry or None, False
+    if isinstance(entry, dict):
+        pubkey = entry.get("pubkey_hex")
+        return (pubkey if isinstance(pubkey, str) and pubkey else None), bool(entry.get("revoked"))
+    return None, False
+
+
+def _is_revoked(
+    known_keys: Optional[Dict[str, Any]],
+    agent_ids: Tuple[str, ...],
+    pubkey_hex: Optional[str],
+) -> bool:
+    """Return True if any of ``agent_ids`` or ``pubkey_hex`` is revoked locally.
+
+    Revocation must not depend only on the agent_id an envelope *claims*: an
+    envelope can omit agent_id entirely while embedding (and signing with) a
+    revoked key. So we check the claimed id, the id derived from the key, and
+    any known_keys entry whose stored pubkey matches the key being used.
+    """
+    if not known_keys:
+        return False
+    for aid in agent_ids:
+        if aid and _known_key_entry(known_keys, aid)[1]:
+            return True
+    if pubkey_hex:
+        needle = pubkey_hex.lower()
+        for entry in known_keys.values():
+            if (
+                isinstance(entry, dict)
+                and entry.get("revoked")
+                and isinstance(entry.get("pubkey_hex"), str)
+                and entry["pubkey_hex"].lower() == needle
+            ):
+                return True
+    return False
+
+
 def verify_envelope(
     envelope: Dict[str, Any],
-    known_keys: Optional[Dict[str, str]] = None,
+    known_keys: Optional[Dict[str, Any]] = None,
 ) -> Optional[bool]:
     """Verify the Ed25519 signature on a v2 envelope.
 
     Returns:
       True  — signature valid
-      False — signature invalid (tampered or wrong key)
-      None  — cannot verify (v1, no sig, no known key)
+      False — signature invalid (tampered, wrong key, malformed key/signature,
+              or the signing key is marked revoked in known_keys)
+      None  — cannot verify (v1 / unsigned: ``sig`` absent or None; or no
+              public key available: ``pubkey`` absent/None/"" and no known key)
 
-    known_keys: dict mapping agent_id -> public_key_hex
+    known_keys: dict mapping agent_id -> public_key_hex, or agent_id -> key
+    metadata dict as returned by ``key_management.load_known_keys()``.
+
+    Malformed attacker-controlled fields (non-hex or wrong-length pubkey/sig,
+    non-string or empty sig, non-string pubkey/agent_id) yield False rather
+    than raising, so one bad envelope cannot crash a listener or inbox reader.
+    Revocation is checked against the claimed agent_id, the agent_id derived
+    from the key actually used, and the key itself, so omitting agent_id
+    cannot bypass it.
     """
     if not isinstance(envelope, dict):
         raise TypeError(f"verify_envelope expects dict, got {type(envelope).__name__}")
 
     sig_hex = envelope.get("sig")
-    if not sig_hex:
+    if sig_hex is None:
         return None  # v1 or unsigned
+    if not isinstance(sig_hex, str) or not sig_hex:
+        return False  # present but malformed ([], {}, 0, "", ...)
 
     agent_id = envelope.get("agent_id", "")
+    if agent_id is None:
+        agent_id = ""
+    if not isinstance(agent_id, str):
+        return False
+
+    known_pubkey, revoked = _known_key_entry(known_keys, agent_id)
+    if revoked:
+        # A locally revoked key must never verify, even when the envelope
+        # embeds the (still mathematically valid) public key itself.
+        return False
 
     # Try to find the public key: embedded pubkey or known_keys cache.
-    pubkey_hex = envelope.get("pubkey")
-    if not pubkey_hex and known_keys:
-        pubkey_hex = known_keys.get(agent_id)
+    # Only None / "" count as "no embedded key"; any other non-string value
+    # is malformed rather than silently replaced by the known key.
+    embedded = envelope.get("pubkey")
+    if embedded is None or embedded == "":
+        pubkey_hex = known_pubkey
+    elif isinstance(embedded, str):
+        pubkey_hex = embedded
+    else:
+        return False
     if not pubkey_hex:
         return None  # No key available to verify
 
+    try:
+        pubkey_bytes = bytes.fromhex(pubkey_hex)
+        sig_bytes = bytes.fromhex(sig_hex)
+    except ValueError:
+        return False
+    if len(pubkey_bytes) != 32 or len(sig_bytes) != 64:
+        return False
+
     # Verify that the pubkey matches the claimed agent_id.
     from .identity import agent_id_from_pubkey
-    expected_id = agent_id_from_pubkey(bytes.fromhex(pubkey_hex))
+    expected_id = agent_id_from_pubkey(pubkey_bytes)
     if agent_id and expected_id != agent_id:
         return False  # agent_id doesn't match pubkey
 
+    if _is_revoked(known_keys, (expected_id,), pubkey_hex):
+        return False
+
     # Reconstruct the signing payload (everything except sig).
     signing_payload = {k: v for k, v in envelope.items() if k not in ("sig", "_beacon_version")}
-    msg = _canonical_json(signing_payload)
-
     try:
-        pk = Ed25519PublicKey.from_public_bytes(bytes.fromhex(pubkey_hex))
-        pk.verify(bytes.fromhex(sig_hex), msg)
+        msg = _canonical_json(signing_payload)
+        pk = Ed25519PublicKey.from_public_bytes(pubkey_bytes)
+        pk.verify(sig_bytes, msg)
         return True
     except Exception:
         return False

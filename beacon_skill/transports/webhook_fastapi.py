@@ -91,13 +91,13 @@ class FastAPIWebhookServer:
 
             for env in envelopes:
                 _learn_key_from_envelope(env, known_keys)
-                verified = verify_envelope(env, known_keys={k: v["pubkey_hex"] for k, v in known_keys.items()})
+                verified = verify_envelope(env, known_keys=known_keys)
                 
                 accepted_env = False
                 reason = "ok"
                 
                 # Security Gates
-                if env.get("sig"):
+                if env.get("sig") is not None:
                     if verified is False:
                         reason = "signature_invalid"
                     elif verified is None:

@@ -113,7 +113,9 @@ class WebhookHandler(BaseHTTPRequestHandler):
 
             nonce = str(env.get("nonce") or "")
             kind = str(env.get("kind") or "")
-            signed = bool(env.get("sig"))
+            # Any present, non-None sig means "signed": a malformed falsy sig
+            # ([], 0, "") must be rejected, not treated as legacy unsigned.
+            signed = env.get("sig") is not None
 
             accepted_env = False
             reason = "ok"
