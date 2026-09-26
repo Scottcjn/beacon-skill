@@ -1523,8 +1523,8 @@ def cmd_agent_card_verify(args: argparse.Namespace) -> int:
 def cmd_webhook_serve(args: argparse.Namespace) -> int:
     from .identity import AgentIdentity
     from .agent_card import generate_agent_card
-    from .transports.webhook import WebhookServer
 
+    backend = getattr(args, "backend", "flask")
     password = getattr(args, "password", None)
     identity = None
     agent_card = None
@@ -1542,9 +1542,22 @@ def cmd_webhook_serve(args: argparse.Namespace) -> int:
         "status": "starting",
         "host": host,
         "port": port,
+        "backend": backend,
         "agent_id": identity.agent_id if identity else None,
     }))
     sys.stdout.flush()
+
+    if backend == "fastapi":
+        from .transports.webhook_fastapi import FastAPIWebhookServer
+
+        server = FastAPIWebhookServer(port=port, host=host, identity=identity, agent_card=agent_card)
+        try:
+            server.run()
+        except KeyboardInterrupt:
+            pass
+        return 0
+
+    from .transports.webhook import WebhookServer
 
     server = WebhookServer(port=port, host=host, identity=identity, agent_card=agent_card)
     try:
@@ -5077,6 +5090,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     sp = wh_sub.add_parser("serve", help="Start a webhook server")
     sp.add_argument("--port", type=int, default=8402, help="Listen port (default 8402)")
     sp.add_argument("--host", default="0.0.0.0", help="Bind host")
+    sp.add_argument("--backend", choices=("flask", "fastapi"), default="flask", help="Webhook server backend (default: flask)")
     sp.add_argument("--password", default=None, help="Password for encrypted identity")
     sp.set_defaults(func=cmd_webhook_serve)
 
