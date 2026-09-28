@@ -178,7 +178,15 @@ class HeartbeatManager:
     def _assess_peer(self, agent_id: str) -> str:
         """Assess a peer's liveness based on heartbeat history.
 
-        Returns: "healthy", "silent", "concerning", "presumed_dead"
+        Returns one of:
+            "unknown"        - no heartbeat has been recorded for this peer
+            "shutting_down"  - the peer's last heartbeat announced shutdown
+            "healthy"        - last beat within ``silence_threshold_s``
+            "concerning"     - last beat within ``dead_threshold_s``
+            "presumed_dead"  - last beat older than ``dead_threshold_s``
+
+        ``silent_peers()`` treats "concerning" and "presumed_dead" as silent;
+        there is no separate "silent" assessment value.
         """
         hb_cfg = self._config.get("heartbeat", {})
         silence_threshold = hb_cfg.get("silence_threshold_s", DEFAULT_SILENCE_THRESHOLD_S)
