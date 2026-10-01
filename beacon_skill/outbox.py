@@ -5,8 +5,10 @@ The executor drains pending items via transports.
 """
 
 import json
+import os
 import random
 import secrets
+import tempfile
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -20,6 +22,10 @@ MAX_RETRY_ATTEMPTS = 3
 BASE_RETRY_DELAY_SECONDS = 1.0
 MAX_RETRY_DELAY_SECONDS = 60.0
 RETRY_JITTER_SECONDS = 0.5
+
+
+class OutboxStateError(RuntimeError):
+    """The persisted outbox index exists but cannot be read safely."""
 
 
 def _gen_action_id() -> str:
@@ -56,16 +62,40 @@ class OutboxManager:
         if not path.exists():
             return {}
         try:
-            return json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
-            return {}
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            raise OutboxStateError(
+                f"Unable to read outbox pending state from {path}: {exc}"
+            ) from exc
+        if not isinstance(data, dict):
+            raise OutboxStateError(
+                f"Invalid outbox pending state in {path}: expected JSON object"
+            )
+        return data
 
     def _write_pending(self, data: Dict[str, Dict[str, Any]]) -> None:
         self._dir.mkdir(parents=True, exist_ok=True)
-        self._pending_path().write_text(
-            json.dumps(data, indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
+        path = self._pending_path()
+        payload = json.dumps(data, indent=2, sort_keys=True) + "\n"
+
+        # Same-directory temp + os.replace makes the update atomic: readers see
+        # either the previous complete JSON object or the new complete object.
+        fd, tmp_name = tempfile.mkstemp(
+            prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent)
         )
+        tmp_path = Path(tmp_name)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(payload)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_path, path)
+        except Exception:
+            try:
+                tmp_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+            raise
 
     def _append_log(self, item: Dict[str, Any]) -> None:
         self._dir.mkdir(parents=True, exist_ok=True)
@@ -99,10 +129,13 @@ class OutboxManager:
             "error": "",
             "conversation_id": conversation_id,
         }
-        self._append_log(item)
+        # Read/validate durable state before appending the audit log so a
+        # corrupted index cannot produce a log entry for an action that was
+        # never actually queued.
         pending = self._read_pending()
         pending[action_id] = item
         self._write_pending(pending)
+        self._append_log(item)
         return action_id
 
     def pending(self, limit: int = 10) -> List[Dict[str, Any]]:

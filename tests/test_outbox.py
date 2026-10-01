@@ -1,10 +1,16 @@
+import json
 import tempfile
 import time
 import unittest
 from pathlib import Path
 from unittest import mock
 
-from beacon_skill.outbox import OutboxManager, MAX_RETRY_ATTEMPTS, _retry_delay_seconds
+from beacon_skill.outbox import (
+    OutboxManager,
+    OutboxStateError,
+    MAX_RETRY_ATTEMPTS,
+    _retry_delay_seconds,
+)
 
 
 class TestOutbox(unittest.TestCase):
@@ -86,7 +92,6 @@ class TestOutbox(unittest.TestCase):
         pending = mgr._read_pending()
         pending[aid] = item
         mgr._write_pending(pending)
-
         self.assertEqual(mgr.pending(), [])
 
     def test_max_retries_auto_fails(self):
@@ -103,14 +108,12 @@ class TestOutbox(unittest.TestCase):
         aid = mgr.queue("reply", "bcn_alice", {"kind": "hello"})
         for _ in range(MAX_RETRY_ATTEMPTS - 1):
             mgr.mark_retry(aid)
-        # After 2 retries: attempts=2, still < MAX_RETRY_ATTEMPTS=3.
-        # Simulate the backoff window having elapsed so the item is ready.
         pending = mgr._read_pending()
         pending[aid]["next_attempt_at"] = time.time() - 1
         mgr._write_pending(pending)
         items = mgr.pending()
         self.assertEqual(len(items), 1)
-        mgr.mark_retry(aid)  # Now attempts=3 >= MAX_RETRY_ATTEMPTS → auto-fail
+        mgr.mark_retry(aid)
         self.assertEqual(len(mgr.pending()), 0)
 
     def test_count_pending(self):
@@ -125,14 +128,12 @@ class TestOutbox(unittest.TestCase):
         mgr.queue("contact", "bcn_bob", {"kind": "offer"})
         recent = mgr.recent(limit=10)
         self.assertEqual(len(recent), 2)
-        # Most recent first
         self.assertEqual(recent[0]["target_agent_id"], "bcn_bob")
 
     def test_cleanup_removes_old_completed(self):
         mgr = self._mgr()
         aid = mgr.queue("reply", "bcn_alice", {"kind": "hello"})
         mgr.mark_sent(aid)
-        # Manually backdate the updated_at
         pending = mgr._read_pending()
         pending[aid]["updated_at"] = int(time.time()) - 8 * 86400
         mgr._write_pending(pending)
@@ -170,6 +171,35 @@ class TestOutbox(unittest.TestCase):
             mgr.queue("reply", f"bcn_{i}", {"kind": "hello"})
         items = mgr.pending(limit=3)
         self.assertEqual(len(items), 3)
+
+    def test_corrupt_pending_state_fails_closed_and_is_not_overwritten(self):
+        mgr = self._mgr()
+        first = mgr.queue("reply", "bcn_a", {"kind": "hello"})
+        pending_path = self.data_dir / "outbox_pending.json"
+        pending_path.write_text("{broken", encoding="utf-8")
+
+        with self.assertRaises(OutboxStateError):
+            mgr.get(first)
+        with self.assertRaises(OutboxStateError):
+            mgr.queue("reply", "bcn_b", {"kind": "hello"})
+
+        self.assertEqual(pending_path.read_text(encoding="utf-8"), "{broken")
+        recent = mgr.recent(limit=10)
+        self.assertEqual(len(recent), 1)
+        self.assertEqual(recent[0]["action_id"], first)
+
+    def test_non_object_pending_state_is_rejected(self):
+        mgr = self._mgr()
+        pending_path = self.data_dir / "outbox_pending.json"
+        pending_path.write_text(json.dumps([]), encoding="utf-8")
+        with self.assertRaises(OutboxStateError):
+            mgr.pending()
+
+    def test_atomic_write_leaves_no_temp_file_on_success(self):
+        mgr = self._mgr()
+        mgr.queue("reply", "bcn_a", {"kind": "hello"})
+        leftovers = list(self.data_dir.glob(".outbox_pending.json.*.tmp"))
+        self.assertEqual(leftovers, [])
 
 
 if __name__ == "__main__":
