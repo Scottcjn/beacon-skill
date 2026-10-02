@@ -57,8 +57,22 @@ function ensureVenv() {
   run('python3', ['-m', 'venv', VENV_DIR]);
 }
 
+const REQUIRED_DEPS = ['requests>=2.25', 'cryptography>=41'];
+
+function getDepsFingerprint() {
+  return `${VERSION}:${REQUIRED_DEPS.join(',')}`;
+}
+
 function ensureDeps() {
-  if (fs.existsSync(MARKER)) return;
+  const expectedFingerprint = `ok ${getDepsFingerprint()}`;
+  if (fs.existsSync(MARKER)) {
+    try {
+      const content = fs.readFileSync(MARKER, 'utf8').trim();
+      if (content === expectedFingerprint) {
+        return;
+      }
+    } catch (_) {}
+  }
 
   const py = pythonBin();
   log('Installing python deps (requests, cryptography)');
@@ -67,11 +81,11 @@ function ensureDeps() {
   run(py, ['-m', 'pip', 'install', '--upgrade', 'pip', 'setuptools', 'wheel'], {
     env: { ...process.env, PIP_DISABLE_PIP_VERSION_CHECK: '1' },
   });
-  run(py, ['-m', 'pip', 'install', 'requests>=2.25', 'cryptography>=41'], {
+  run(py, ['-m', 'pip', 'install', ...REQUIRED_DEPS], {
     env: { ...process.env, PIP_DISABLE_PIP_VERSION_CHECK: '1' },
   });
 
-  fs.writeFileSync(MARKER, `ok ${VERSION}\n`);
+  fs.writeFileSync(MARKER, `${expectedFingerprint}\n`);
 }
 
 function main() {
@@ -97,9 +111,20 @@ function main() {
   process.exit(typeof r.status === 'number' ? r.status : 1);
 }
 
-try {
-  main();
-} catch (e) {
-  log(String(e && e.message ? e.message : e));
-  process.exit(1);
+if (require.main === module) {
+  try {
+    main();
+  } catch (e) {
+    log(String(e && e.message ? e.message : e));
+    process.exit(1);
+  }
 }
+
+module.exports = {
+  getDepsFingerprint,
+  REQUIRED_DEPS,
+  ensureDeps,
+  pythonBin,
+  haveVenv,
+  MARKER,
+};
