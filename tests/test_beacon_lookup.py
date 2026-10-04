@@ -356,3 +356,91 @@ class TestAgentfolioBeaconLookup:
             agentfolio_beacon_lookup("bcn_test123")
 
         assert "500" in str(exc_info.value)
+
+
+# =============================================================================
+# Test #943: Atlas route fallback (live /beacon/atlas 404s, /api/agents serves)
+# =============================================================================
+
+class TestAtlasRouteFallback:
+    """#943: the MCP lookup must reach the Atlas with TLS verification on.
+
+    The public host serves the agent list at ``/beacon/api/agents``; the
+    historical ``/beacon/atlas`` alias 404s there. A bare host swap is not
+    enough, and the fix must never fall back to a raw node IP.
+    """
+
+    def test_agents_endpoint_derivation(self):
+        from mcp_server.beacon_lookup import _atlas_agents_endpoint
+
+        assert (
+            _atlas_agents_endpoint("https://rustchain.org/beacon/atlas")
+            == "https://rustchain.org/beacon/api/agents"
+        )
+        assert (
+            _atlas_agents_endpoint("https://rustchain.org/beacon")
+            == "https://rustchain.org/beacon/api/agents"
+        )
+        # Already canonical -> unchanged
+        assert (
+            _atlas_agents_endpoint("https://rustchain.org/beacon/api/agents")
+            == "https://rustchain.org/beacon/api/agents"
+        )
+
+    @patch("mcp_server.beacon_lookup.requests.get")
+    @patch("mcp_server.beacon_lookup._lookup_satp_for_beacon", return_value=None)
+    def test_lookup_falls_back_to_agents_list(self, mock_satp, mock_get):
+        """404 on /beacon/atlas -> retry /api/agents and select the record."""
+        primary = MagicMock()
+        primary.status_code = 404
+        primary.text = "<html>404</html>"
+
+        alt = MagicMock()
+        alt.status_code = 200
+        alt.json.return_value = [
+            {"agent_id": "bcn_other", "name": "Other"},
+            {"agent_id": "bcn_target", "public_key_hex": "aa", "hardware_fingerprint": "fp"},
+        ]
+        mock_get.side_effect = [primary, alt]
+
+        beacon = lookup_beacon("bcn_target")
+
+        assert beacon.agent_id == "bcn_target"
+        # second call must hit the canonical agents endpoint on the same host
+        second_url = mock_get.call_args_list[1].args[0]
+        assert second_url.endswith("/beacon/api/agents")
+        assert "50.28.86.131" not in second_url
+
+    @patch("mcp_server.beacon_lookup.requests.get")
+    @patch("mcp_server.beacon_lookup._lookup_satp_for_beacon", return_value=None)
+    def test_fallback_missing_beacon_is_not_found(self, mock_satp, mock_get):
+        """Agents list reachable but id absent -> not found, no raw-IP retry."""
+        primary = MagicMock()
+        primary.status_code = 404
+        alt = MagicMock()
+        alt.status_code = 200
+        alt.json.return_value = [{"agent_id": "bcn_someone_else"}]
+        mock_get.side_effect = [primary, alt]
+
+        with pytest.raises(BeaconLookupError) as exc_info:
+            lookup_beacon("bcn_absent")
+
+        assert "not found" in str(exc_info.value).lower()
+        for call in mock_get.call_args_list:
+            assert "50.28.86.131" not in str(call.args[0])
+
+    @patch("mcp_server.beacon_lookup.requests.get")
+    @patch("mcp_server.beacon_lookup._lookup_satp_for_beacon", return_value=None)
+    def test_dict_payload_still_supported(self, mock_satp, mock_get):
+        """Lab nodes returning a single dict keep working (back-compat)."""
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.json.return_value = {
+            "agent_id": "bcn_lab",
+            "public_key_hex": "bb",
+            "hardware_fingerprint": "fp",
+        }
+        mock_get.return_value = resp
+
+        beacon = lookup_beacon("bcn_lab")
+        assert beacon.agent_id == "bcn_lab"

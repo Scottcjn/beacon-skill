@@ -27,8 +27,14 @@ logger = logging.getLogger(__name__)
 # with certificate verification switched off -- which is exactly the failure
 # mode this module must not invite. Verification stays on (requests' default).
 # Override for a lab node with BEACON_ATLAS_URL.
+#
+# NB: the live Atlas serves its agent list at ``<base>/api/agents``. The
+# historical ``/beacon/atlas`` alias is a UI route that is not deployed on the
+# public host -- it 404s there (#943), so ``lookup_beacon`` falls back to the
+# canonical agents route on the same host when the configured URL is missing.
 BEACON_DIRECTORY_URL = "https://bottube.ai/api/beacon/directory"
 DEFAULT_BEACON_ATLAS_URL = "https://rustchain.org/beacon/atlas"
+DEFAULT_BEACON_AGENTS_ROUTE = "/api/agents"
 AGENTFOLIO_API_URL = "https://agentfolio.bot/api/satp"
 
 
@@ -40,6 +46,30 @@ def resolve_atlas_url(env: Optional[Dict[str, str]] = None) -> str:
 
 BEACON_ATLAS_URL = resolve_atlas_url()
 DEFAULT_TIMEOUT = 30
+
+
+def _atlas_agents_endpoint(atlas_url: str) -> str:
+    """Canonical Atlas agents-list endpoint on the same host as ``atlas_url``.
+
+    The public Atlas exposes its agent list at ``<base>/api/agents``; the
+    ``/beacon/atlas`` alias is a UI route that 404s on the public host (#943).
+    Derive the agents endpoint from the configured URL's host so lookups work
+    with TLS verification on and no raw-IP fallback:
+
+    - ``https://host/beacon/atlas``  -> ``https://host/beacon/api/agents``
+    - ``https://host/beacon``        -> ``https://host/beacon/api/agents``
+    - ``https://host/beacon/api/agents`` -> unchanged
+    """
+    from urllib.parse import urlsplit, urlunsplit
+
+    parts = urlsplit(atlas_url)
+    path = parts.path.rstrip("/")
+    if path.endswith(DEFAULT_BEACON_AGENTS_ROUTE):
+        return atlas_url
+    if path.endswith("/atlas"):
+        path = path[: -len("/atlas")]
+    path = path + DEFAULT_BEACON_AGENTS_ROUTE
+    return urlunsplit((parts.scheme, parts.netloc, path, "", ""))
 
 
 class BeaconLookupError(Exception):
@@ -100,6 +130,31 @@ class BeaconInfo:
         )
 
 
+def _select_beacon_record(payload: Any, beacon_id: str) -> Optional[Dict[str, Any]]:
+    """Extract the single beacon record for ``beacon_id`` from an Atlas response.
+
+    The public Atlas exposes its agent list at ``/api/agents``, which returns a
+    **list** of agent summaries; older/lab deployments returned a single dict for
+    a filtered ``?agent_id=`` query. Accept both shapes (plus a ``{"agents": []}``
+    wrapper) so lookup works whichever endpoint the resolved URL points at.
+
+    Returns ``None`` when the payload is a list that does not contain the beacon.
+    """
+    if isinstance(payload, dict):
+        # Wrapped list, e.g. {"agents": [...]} or {"beacons": [...]}
+        for key in ("agents", "beacons"):
+            if isinstance(payload.get(key), list):
+                return _select_beacon_record(payload[key], beacon_id)
+        # Single-record payload (filtered endpoint) — use as-is.
+        return payload
+    if isinstance(payload, list):
+        for item in payload:
+            if isinstance(item, dict) and item.get("agent_id") == beacon_id:
+                return item
+        return None
+    return None
+
+
 def lookup_beacon(beacon_id: str) -> BeaconInfo:
     """
     Look up a single Beacon by its ID.
@@ -131,20 +186,38 @@ def lookup_beacon(beacon_id: str) -> BeaconInfo:
             timeout=DEFAULT_TIMEOUT,
         )
 
-        if response.status_code == 404:
-            raise BeaconLookupError(
-                f"Beacon {beacon_id} not found",
-                beacon_id=beacon_id,
-            )
-
-        if response.status_code != 200:
+        data: Optional[Dict[str, Any]] = None
+        if response.status_code == 200:
+            data = _select_beacon_record(response.json(), beacon_id)
+        elif response.status_code == 404:
+            # The configured ``/beacon/atlas`` alias is a UI route that is not
+            # deployed on the public host, so it 404s there even though the
+            # Atlas itself is healthy (#943). Fall back to the canonical agents
+            # list on the *same host*, keeping TLS verification on -- never to a
+            # raw node IP.
+            fallback = _atlas_agents_endpoint(BEACON_ATLAS_URL)
+            if fallback and fallback != BEACON_ATLAS_URL:
+                alt = requests.get(fallback, timeout=DEFAULT_TIMEOUT)
+                if alt.status_code == 200:
+                    data = _select_beacon_record(alt.json(), beacon_id)
+                elif alt.status_code != 404:
+                    raise BeaconLookupError(
+                        f"Atlas returned status {alt.status_code}",
+                        beacon_id=beacon_id,
+                        details={"response": alt.text},
+                    )
+        else:
             raise BeaconLookupError(
                 f"Atlas returned status {response.status_code}",
                 beacon_id=beacon_id,
                 details={"response": response.text},
             )
 
-        data = response.json()
+        if data is None:
+            raise BeaconLookupError(
+                f"Beacon {beacon_id} not found",
+                beacon_id=beacon_id,
+            )
 
         # Also try to get SATP info from AgentFolio
         satp_info = _lookup_satp_for_beacon(beacon_id)
