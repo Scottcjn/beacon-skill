@@ -85,6 +85,36 @@ def _entry_to_row(entry: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _entry_identity(entry: Dict[str, Any]) -> tuple:
+    """Stable identity for a consumed inbox entry.
+
+    `read_inbox(since=...)` includes entries whose `received_at` equals `since`,
+    so the dashboard's boundary entry is returned again on the next idle poll.
+    The consumer deduplicates by this identity (nonce + timestamp + row shape)
+    so a previously consumed entry is not recounted, while distinct
+    same-timestamp arrivals (a different nonce) still surface.
+    """
+    env = entry.get("envelope") or {}
+    row = _entry_to_row(entry)
+    return (env.get("nonce") or "", row["received_at"], row["kind"], row["message"])
+
+
+def _select_new_entries(entries: List[Dict[str, Any]], seen_keys: set) -> List[Dict[str, Any]]:
+    """Return rows for entries not yet consumed, adding their identities to `seen_keys`.
+
+    Keeps the reader semantics (the boundary entry may be re-returned) while the
+    consumer counts/displays each distinct arrival exactly once.
+    """
+    fresh = []
+    for entry in entries:
+        key = _entry_identity(entry)
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+        fresh.append(_entry_to_row(entry))
+    return fresh
+
+
 def _row_matches_query(row: Dict[str, Any], query: str) -> bool:
     q = (query or "").strip().lower()
     if not q:
@@ -323,6 +353,7 @@ def run_dashboard(
             self._agent_counter: Counter[str] = Counter()
             self._history_rows: List[Dict[str, Any]] = []
             self._visible_rows: List[Dict[str, Any]] = []
+            self._seen_entry_keys: set = set()
             self._filter_query = (initial_filter or "").strip().lower()
             self._api_state: Dict[str, Any] = {
                 "ok": False,
@@ -450,7 +481,7 @@ def run_dashboard(
                 if rts > self._last_ts:
                     self._last_ts = rts
 
-                row = _entry_to_row(entry)
+            for row in _select_new_entries(entries, self._seen_entry_keys):
                 self._history_rows.append(row)
                 if len(self._history_rows) > 5000:
                     self._history_rows = self._history_rows[-5000:]
