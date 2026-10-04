@@ -162,8 +162,14 @@ def fetch_beacon_snapshot(
                 continue
             try:
                 payload = resp.json()
-            except Exception:
-                payload = {}
+            except Exception as e:
+                # A 200 whose body cannot be decoded is a degraded endpoint,
+                # not a healthy empty network: surface it through the same
+                # partial-failure path as HTTP/transport errors.
+                out["ok"] = False
+                out["errors"].append(f"{name}: invalid JSON body ({e})")
+                out[name] = []
+                continue
             out[name] = _normalize_api_rows(payload)
         except Exception as e:
             out["ok"] = False

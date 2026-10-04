@@ -88,6 +88,35 @@ class TestDashboardHelpers(unittest.TestCase):
         self.assertGreaterEqual(len(snap["errors"]), 2)
         self.assertEqual(snap["reputation_count"], 0)
 
+    def test_fetch_beacon_snapshot_undecodable_200_is_degraded(self):
+        """#959: a 200 whose body cannot be decoded must not read as healthy."""
+
+        class _BadJSON(_Resp):
+            def json(self):
+                raise ValueError("Expecting value")
+
+        def handler(method, url):  # noqa: ARG001
+            if url.endswith("/api/agents"):
+                return _Resp(200, [{"id": "a1"}])
+            if url.endswith("/api/contracts"):
+                return _BadJSON(200)
+            return _Resp(200, [])
+
+        snap = fetch_beacon_snapshot(session=_Session(handler))
+        self.assertFalse(snap["ok"])
+        self.assertTrue(any("contracts" in e for e in snap["errors"]))
+        # valid endpoints survive the degradation
+        self.assertEqual(snap["agents_count"], 1)
+
+    def test_fetch_beacon_snapshot_valid_empty_is_healthy(self):
+        """A genuinely empty network still reports ok (control for #959)."""
+        def handler(method, url):  # noqa: ARG001
+            return _Resp(200, [])
+
+        snap = fetch_beacon_snapshot(session=_Session(handler))
+        self.assertTrue(snap["ok"])
+        self.assertEqual(snap["errors"], [])
+
     def test_export_dashboard_rows_json_and_csv(self):
         rows = [
             {
