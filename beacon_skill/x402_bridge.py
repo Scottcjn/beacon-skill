@@ -170,6 +170,34 @@ def x402_required(service_key: str, description: str = ""):
     return decorator
 
 
+def _rtc_history_row_is_settled(tx: Dict[str, Any], tx_hash: str) -> bool:
+    """Return True only on positive evidence that a /wallet/history row is settled.
+
+    RustChain transfers are two-phase. /wallet/history merges two sources:
+
+    * ``ledger`` rows (balance already moved). The pending-transfer confirmer
+      writes the recipient's row with reason ``transfer_in:<from>:<tx_hash>``;
+      these rows carry a ``reason`` and no ``status`` field.
+    * ``pending_ledger`` rows that are not yet confirmed. These carry an
+      explicit ``status`` (``pending``, ``voided``, ...) and no ``reason``.
+
+    So a row with an explicit status is judged by that status, and a row with
+    no status is accepted only if it carries the confirmer's exact
+    ``transfer_in`` ledger reason for this sender and tx_hash. Anything else
+    (missing status and no matching reason) is treated as unsettled.
+    """
+    status = str(tx.get("status") or "").strip().lower()
+    if status:
+        return status in _FINAL_RTC_STATUSES
+
+    tx_from = str(tx.get("from") or "").strip()
+    return (
+        str(tx.get("type") or "") == "transfer_in"
+        and bool(tx_from)
+        and str(tx.get("reason") or "") == f"transfer_in:{tx_from}:{tx_hash}"
+    )
+
+
 def _verify_rtc_payment(rtc_header: str, service_key: str) -> Dict[str, Any]:
     """Verify RTC payment for dual-economy support.
 
@@ -241,10 +269,14 @@ def _verify_rtc_payment(rtc_header: str, service_key: str) -> Dict[str, Any]:
         if tx_from != from_wallet:
             return {"verified": False, "error": "rtc_from_wallet_mismatch"}
 
-        status = str(matching_tx.get("status", "")).strip().lower()
-        if status not in _FINAL_RTC_STATUSES:
-            return {"verified": False, "error": f"unsettled_rtc_tx:{status or 'missing'}"}
+        if not _rtc_history_row_is_settled(matching_tx, tx_hash):
+            status = str(matching_tx.get("status") or "").strip().lower()
+            return {"verified": False, "error": f"unsettled_rtc_tx:{status or 'unproven'}"}
 
+        # The timestamp of a confirmed history row is the time the node's
+        # confirmer settled it, not the time the payer sent it, so this window
+        # starts at settlement. It also bounds replay: _VERIFIED_RTC_TX_HASHES
+        # is per-process memory, so widening the window widens replay exposure.
         max_age_s = int(os.environ.get("RTC_PAYMENT_MAX_AGE_SECONDS", "3600"))
         tx_timestamp = matching_tx.get("timestamp")
         if tx_timestamp and max_age_s > 0:
