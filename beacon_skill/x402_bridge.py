@@ -184,14 +184,14 @@ _RTC_DEFAULT_MAX_AGE_SECONDS = 3600
 def _rtc_payments_enabled() -> bool:
     """RTC payments are OFF unless RTC_X402_PAYMENTS_ENABLED is exactly "1".
 
-    Surrounding whitespace is ignored; any other value ("true", "yes", "on",
-    "2", ...) leaves the path disabled, so the kill switch is unambiguous.
+    Any other value, including " 1" or "1 " with stray whitespace, "true", "yes",
+    "on" or "2", leaves the path disabled, so the kill switch is unambiguous.
 
     The header proves knowledge of a public transfer, not ownership of it, so
     an observer can claim someone else's confirmed payment first. Keep the path
     disabled until payments are bound to a payer-held secret (see #964 / PR).
     """
-    return os.environ.get("RTC_X402_PAYMENTS_ENABLED", "0").strip() == "1"
+    return os.environ.get("RTC_X402_PAYMENTS_ENABLED", "0") == "1"
 
 
 class RtcPaymentDbConfigError(RuntimeError):
@@ -218,6 +218,11 @@ def _rtc_payment_db_path() -> str:
         or "\0" in path
     ):
         raise RtcPaymentDbConfigError("invalid_rtc_payment_db: must be a persistent file path")
+    # A relative or "~" path resolves against the process's working directory
+    # or user, so two workers (or a restart from another directory) could
+    # each get their own replay DB. Require one unambiguous absolute path.
+    if not os.path.isabs(path):
+        raise RtcPaymentDbConfigError("invalid_rtc_payment_db: path must be absolute")
     if os.path.isdir(path):
         raise RtcPaymentDbConfigError("invalid_rtc_payment_db: path is a directory")
     return path

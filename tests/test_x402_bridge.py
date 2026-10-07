@@ -416,7 +416,8 @@ class TestRtcRound2Hardening(RtcTestBase):
         # Item 1: each connection to ":memory:" is a fresh DB, so replay would pass.
         mock_get.return_value = self._history(self._confirmed())
         for bad in (":memory:", "", "file::memory:", "file:x?mode=memory&cache=shared",
-                    "FILE:rtc.db", " /tmp/rtc.db", self._tmp.name):
+                    "FILE:rtc.db", " /tmp/rtc.db", self._tmp.name,
+                    "rtc.db", "./rtc.db", "data/rtc.db", "~/rtc.db"):
             with self.subTest(db=bad), patch.dict("os.environ", {"RTC_PAYMENT_DB": bad}):
                 first = x402_bridge._verify_rtc_payment(self._header(), "atlas_query")
                 second = x402_bridge._verify_rtc_payment(self._header(), "atlas_query")
@@ -458,7 +459,7 @@ class TestRtcRound2Hardening(RtcTestBase):
 
     def test_flag_accepts_exactly_one(self):
         # Item 5.
-        for value, expected in (("1", True), (" 1", True), ("1 ", True), ("true", False),
+        for value, expected in (("1", True), (" 1", False), ("1 ", False), ("true", False),
                                 ("yes", False), ("on", False), ("TRUE", False), ("2", False),
                                 ("0", False), ("", False), ("01", False)):
             with self.subTest(value=value), patch.dict("os.environ", {"RTC_X402_PAYMENTS_ENABLED": value}):
