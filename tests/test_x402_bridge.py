@@ -1,5 +1,9 @@
 import copy
 import json
+import os
+import sqlite3
+import tempfile
+import threading
 import time
 import unittest
 from unittest.mock import patch
@@ -16,92 +20,8 @@ class FakeResponse:
         return self._payload
 
 
-class TestRtcPaymentVerification(unittest.TestCase):
-    def setUp(self):
-        x402_bridge._VERIFIED_RTC_TX_HASHES.clear()
-
-    def _header(self, **overrides):
-        payload = {
-            "tx_hash": "abc123",
-            "amount_rtc": 0.1,
-            "from_wallet": "RTCsender",
-            "to_wallet": "RTCservice",
-        }
-        payload.update(overrides)
-        return json.dumps(payload)
-
-    def test_rejects_missing_tx_hash(self):
-        with patch.dict("os.environ", {"RTC_PAY_TO": "RTCservice"}):
-            result = x402_bridge._verify_rtc_payment(self._header(tx_hash=""), "inference_llm")
-
-        self.assertFalse(result["verified"])
-        self.assertEqual(result["error"], "missing_tx_hash")
-
-    def test_rejects_client_pay_to_mismatch(self):
-        with patch.dict("os.environ", {"RTC_PAY_TO": "RTCservice"}):
-            result = x402_bridge._verify_rtc_payment(self._header(to_wallet="RTCattacker"), "inference_llm")
-
-        self.assertFalse(result["verified"])
-        self.assertEqual(result["error"], "rtc_pay_to_mismatch")
-
-    @patch("requests.get")
-    def test_rejects_pending_history_transaction(self, mock_get):
-        mock_get.return_value = FakeResponse({
-            "transactions": [{
-                "tx_hash": "abc123",
-                "amount": 0.1,
-                "from": "RTCsender",
-                "status": "pending",
-                "timestamp": time.time(),
-            }]
-        })
-
-        with patch.dict("os.environ", {"RTC_PAY_TO": "RTCservice"}):
-            result = x402_bridge._verify_rtc_payment(self._header(), "inference_llm")
-
-        self.assertFalse(result["verified"])
-        self.assertEqual(result["error"], "unsettled_rtc_tx:pending")
-        mock_get.assert_called_once()
-        self.assertEqual(mock_get.call_args.kwargs["params"], {"miner_id": "RTCservice"})
-
-    @patch("requests.get")
-    def test_verifies_settled_recipient_history_transaction(self, mock_get):
-        mock_get.return_value = FakeResponse({
-            "transactions": [{
-                "tx_hash": "abc123",
-                "amount": 0.1,
-                "from": "RTCsender",
-                "status": "settled",
-                "timestamp": time.time(),
-            }]
-        })
-
-        with patch.dict("os.environ", {"RTC_PAY_TO": "RTCservice"}):
-            result = x402_bridge._verify_rtc_payment(self._header(), "inference_llm")
-
-        self.assertTrue(result["verified"])
-        self.assertEqual(result["tx_hash"], "abc123")
-
-    @patch("requests.get")
-    def test_rejects_replayed_tx_hash(self, mock_get):
-        mock_get.return_value = FakeResponse({
-            "transactions": [{
-                "tx_hash": "abc123",
-                "amount": 0.1,
-                "from": "RTCsender",
-                "status": "confirmed",
-                "timestamp": time.time(),
-            }]
-        })
-
-        with patch.dict("os.environ", {"RTC_PAY_TO": "RTCservice"}):
-            first = x402_bridge._verify_rtc_payment(self._header(), "inference_llm")
-            second = x402_bridge._verify_rtc_payment(self._header(), "inference_llm")
-
-        self.assertTrue(first["verified"])
-        self.assertFalse(second["verified"])
-        self.assertEqual(second["error"], "rtc_payment_replay")
-
+PAY_TO = "RTCservice"
+TX_HASH = "0123456789abcdef0123456789abcdef"
 
 # Rows captured verbatim from https://rustchain.org/wallet/history on 2026-10-07
 # (read-only GET). A confirmed transfer comes from the node's ``ledger`` table:
@@ -129,16 +49,27 @@ LIVE_PENDING_ROW = {
 }
 
 
-class TestRtcPaymentLiveHistoryShape(unittest.TestCase):
-    """Regression for #964 using the real /wallet/history payload shape."""
+class RtcTestBase(unittest.TestCase):
+    """Payments enabled, isolated durable replay DB per test."""
 
     def setUp(self):
-        x402_bridge._VERIFIED_RTC_TX_HASHES.clear()
+        self._tmp = tempfile.TemporaryDirectory()
+        self.db_path = os.path.join(self._tmp.name, "rtc.db")
+        self._env = patch.dict("os.environ", {
+            "RTC_PAY_TO": PAY_TO,
+            "RTC_PAYMENT_DB": self.db_path,
+            "RTC_X402_PAYMENTS_ENABLED": "1",
+        })
+        self._env.start()
+
+    def tearDown(self):
+        self._env.stop()
+        self._tmp.cleanup()
 
     @staticmethod
-    def _history(*rows):
+    def _history(*rows, miner_id=PAY_TO):
         return FakeResponse({
-            "miner_id": "RTCservice",
+            "miner_id": miner_id,
             "ok": True,
             "total": len(rows),
             "transactions": list(rows),
@@ -151,20 +82,74 @@ class TestRtcPaymentLiveHistoryShape(unittest.TestCase):
         return row
 
     @staticmethod
-    def _header(row, **overrides):
+    def _confirmed(tx_hash=TX_HASH, sender="RTCsender", amount=0.1):
+        return {
+            "amount": amount,
+            "epoch": 43033,
+            "from": sender,
+            "reason": f"transfer_in:{sender}:{tx_hash}",
+            "timestamp": int(time.time()),
+            "tx_hash": tx_hash,
+            "type": "transfer_in",
+        }
+
+    @staticmethod
+    def _header(row=None, **overrides):
+        row = row or {"tx_hash": TX_HASH, "amount": 0.1, "from": "RTCsender"}
         payload = {
             "tx_hash": row["tx_hash"],
             "amount_rtc": float(row["amount"]),
             "from_wallet": row["from"],
-            "to_wallet": "RTCservice",
+            "to_wallet": PAY_TO,
         }
         payload.update(overrides)
         return json.dumps(payload)
 
     def _verify(self, mock_get, response, header, service="atlas_query"):
         mock_get.return_value = response
-        with patch.dict("os.environ", {"RTC_PAY_TO": "RTCservice"}):
-            return x402_bridge._verify_rtc_payment(header, service)
+        return x402_bridge._verify_rtc_payment(header, service)
+
+
+class TestRtcPaymentVerification(RtcTestBase):
+    def test_rejects_missing_tx_hash(self):
+        result = x402_bridge._verify_rtc_payment(self._header(tx_hash=""), "inference_llm")
+        self.assertEqual(result, {"verified": False, "error": "missing_tx_hash"})
+
+    def test_rejects_client_pay_to_mismatch(self):
+        result = x402_bridge._verify_rtc_payment(self._header(to_wallet="RTCattacker"), "inference_llm")
+        self.assertEqual(result, {"verified": False, "error": "rtc_pay_to_mismatch"})
+
+    @patch("requests.get")
+    def test_requests_recipient_history_with_limit(self, mock_get):
+        result = self._verify(mock_get, self._history(self._confirmed()), self._header(), "inference_llm")
+
+        self.assertTrue(result["verified"], result)
+        mock_get.assert_called_once()
+        self.assertEqual(mock_get.call_args.kwargs["params"], {"miner_id": PAY_TO, "limit": 200})
+
+
+class TestRtcPaymentsDisabledByDefault(unittest.TestCase):
+    @patch("requests.get")
+    def test_disabled_without_flag(self, mock_get):
+        env = {k: v for k, v in os.environ.items() if k != "RTC_X402_PAYMENTS_ENABLED"}
+        env["RTC_PAY_TO"] = PAY_TO
+        with patch.dict("os.environ", env, clear=True):
+            result = x402_bridge._verify_rtc_payment(RtcTestBase._header(), "atlas_query")
+
+        self.assertEqual(result, {"verified": False, "error": "rtc_payments_disabled"})
+        mock_get.assert_not_called()
+
+    @patch("requests.get")
+    def test_disabled_when_flag_zero(self, mock_get):
+        with patch.dict("os.environ", {"RTC_PAY_TO": PAY_TO, "RTC_X402_PAYMENTS_ENABLED": "0"}):
+            result = x402_bridge._verify_rtc_payment(RtcTestBase._header(), "atlas_query")
+
+        self.assertEqual(result["error"], "rtc_payments_disabled")
+        mock_get.assert_not_called()
+
+
+class TestRtcPaymentLiveHistoryShape(RtcTestBase):
+    """Regression for #964 using the real /wallet/history payload shape."""
 
     @patch("requests.get")
     def test_confirmed_ledger_row_without_status_verifies(self, mock_get):
@@ -180,18 +165,14 @@ class TestRtcPaymentLiveHistoryShape(unittest.TestCase):
     def test_pending_row_is_rejected(self, mock_get):
         row = self._fresh(LIVE_PENDING_ROW)
         result = self._verify(mock_get, self._history(row), self._header(row))
-
-        self.assertFalse(result["verified"])
-        self.assertEqual(result["error"], "unsettled_rtc_tx:pending")
+        self.assertEqual(result, {"verified": False, "error": "unsettled_rtc_tx:pending"})
 
     @patch("requests.get")
     def test_voided_row_is_rejected(self, mock_get):
         row = self._fresh(LIVE_PENDING_ROW)
         row["status"] = "voided"
         result = self._verify(mock_get, self._history(row), self._header(row))
-
-        self.assertFalse(result["verified"])
-        self.assertEqual(result["error"], "unsettled_rtc_tx:voided")
+        self.assertEqual(result, {"verified": False, "error": "unsettled_rtc_tx:voided"})
 
     @patch("requests.get")
     def test_row_without_status_or_ledger_reason_is_rejected(self, mock_get):
@@ -199,18 +180,14 @@ class TestRtcPaymentLiveHistoryShape(unittest.TestCase):
         row = self._fresh(LIVE_PENDING_ROW)
         del row["status"]
         result = self._verify(mock_get, self._history(row), self._header(row))
-
-        self.assertFalse(result["verified"])
-        self.assertEqual(result["error"], "unsettled_rtc_tx:unproven")
+        self.assertEqual(result, {"verified": False, "error": "unsettled_rtc_tx:unproven"})
 
     @patch("requests.get")
     def test_row_whose_reason_names_another_tx_is_rejected(self, mock_get):
         row = self._fresh(LIVE_CONFIRMED_ROW)
-        row["reason"] = "transfer_in:founder_team_bounty:0000000000000000000000000000000"
+        row["reason"] = "transfer_in:founder_team_bounty:00000000000000000000000000000000"
         result = self._verify(mock_get, self._history(row), self._header(row))
-
-        self.assertFalse(result["verified"])
-        self.assertEqual(result["error"], "unsettled_rtc_tx:unproven")
+        self.assertEqual(result, {"verified": False, "error": "unsettled_rtc_tx:unproven"})
 
     @patch("requests.get")
     def test_wrong_amount_is_rejected(self, mock_get):
@@ -227,9 +204,7 @@ class TestRtcPaymentLiveHistoryShape(unittest.TestCase):
         row = self._fresh(LIVE_CONFIRMED_ROW)
         result = self._verify(mock_get, self._history(row),
                               self._header(row, from_wallet="founder_community"))
-
-        self.assertFalse(result["verified"])
-        self.assertEqual(result["error"], "rtc_from_wallet_mismatch")
+        self.assertEqual(result, {"verified": False, "error": "rtc_from_wallet_mismatch"})
 
     @patch("requests.get")
     def test_replayed_tx_hash_is_rejected(self, mock_get):
@@ -238,17 +213,201 @@ class TestRtcPaymentLiveHistoryShape(unittest.TestCase):
         second = self._verify(mock_get, self._history(row), self._header(row))
 
         self.assertTrue(first["verified"], first)
-        self.assertFalse(second["verified"])
-        self.assertEqual(second["error"], "rtc_payment_replay")
+        self.assertEqual(second, {"verified": False, "error": "rtc_payment_replay"})
 
     @patch("requests.get")
     def test_stale_confirmed_row_is_rejected(self, mock_get):
-        row = copy.deepcopy(LIVE_CONFIRMED_ROW)  # original 2026 timestamp, far past 3600 s
+        row = copy.deepcopy(LIVE_CONFIRMED_ROW)  # original timestamp, far past 3600 s
         with patch.dict("os.environ", {"RTC_PAYMENT_MAX_AGE_SECONDS": "3600"}):
             result = self._verify(mock_get, self._history(row), self._header(row))
+        self.assertEqual(result, {"verified": False, "error": "stale_rtc_tx"})
 
-        self.assertFalse(result["verified"])
-        self.assertEqual(result["error"], "stale_rtc_tx")
+
+class TestRtcDurableReplay(RtcTestBase):
+    """Blocker 1: replay protection is shared, durable and atomic."""
+
+    @patch("requests.get")
+    def test_replay_survives_process_restart(self, mock_get):
+        row = self._confirmed()
+        first = self._verify(mock_get, self._history(row), self._header(row))
+        self.assertTrue(first["verified"], first)
+
+        # Nothing lives in module memory any more: a fresh process / other
+        # worker sees the same consumed row through the shared DB file.
+        self.assertFalse(hasattr(x402_bridge, "_VERIFIED_RTC_TX_HASHES"))
+        with sqlite3.connect(self.db_path) as conn:
+            stored = conn.execute(
+                "SELECT tx_hash, from_wallet, pay_to FROM consumed_rtc_payments"
+            ).fetchall()
+        self.assertEqual(stored, [(TX_HASH, "RTCsender", PAY_TO)])
+
+        second = self._verify(mock_get, self._history(row), self._header(row))
+        self.assertEqual(second, {"verified": False, "error": "rtc_payment_replay"})
+
+    def test_consume_is_atomic_under_concurrency(self):
+        results = []
+        barrier = threading.Barrier(8)
+
+        def claim():
+            barrier.wait()
+            results.append(x402_bridge._consume_rtc_tx_hash(TX_HASH, "RTCsender", PAY_TO, 0.1, "atlas_query"))
+
+        threads = [threading.Thread(target=claim) for _ in range(8)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        self.assertEqual(sorted(results), [False] * 7 + [True])
+
+    @patch("requests.get")
+    def test_concurrent_requests_verify_exactly_once(self, mock_get):
+        mock_get.return_value = self._history(self._confirmed())
+        results = []
+        barrier = threading.Barrier(6)
+
+        def attempt():
+            barrier.wait()
+            results.append(x402_bridge._verify_rtc_payment(self._header(), "atlas_query"))
+
+        threads = [threading.Thread(target=attempt) for _ in range(6)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        self.assertEqual(sum(1 for r in results if r["verified"]), 1, results)
+        self.assertTrue(all(r["error"] == "rtc_payment_replay" for r in results if not r["verified"]))
+
+    @patch("requests.get")
+    def test_failed_verification_does_not_consume(self, mock_get):
+        pending = dict(self._confirmed(), status="pending")
+        del pending["reason"]
+        result = self._verify(mock_get, self._history(pending), self._header())
+        self.assertEqual(result["error"], "unsettled_rtc_tx:pending")
+
+        result = self._verify(mock_get, self._history(self._confirmed()), self._header())
+        self.assertTrue(result["verified"], result)
+
+
+class TestRtcNonFiniteAmounts(RtcTestBase):
+    """Blocker 3: NaN / inf / non-positive amounts are rejected."""
+
+    def test_header_non_finite_or_non_positive_amount(self):
+        for bad in ("NaN", "Infinity", "-Infinity", 0, -1, "1.0", None, True, [1]):
+            with self.subTest(amount_rtc=bad):
+                header = json.dumps({"tx_hash": TX_HASH, "amount_rtc": bad,
+                                     "from_wallet": "RTCsender"})
+                if isinstance(bad, str) and bad.lower().lstrip("-") in ("nan", "infinity"):
+                    # Python's json emits bare NaN/Infinity tokens; build that form.
+                    header = header.replace(f'"{bad}"', bad)
+                result = x402_bridge._verify_rtc_payment(header, "atlas_query")
+                self.assertEqual(result, {"verified": False, "error": "malformed_amount_rtc"})
+
+    @patch("requests.get")
+    def test_row_non_finite_or_non_positive_amount(self, mock_get):
+        for bad in (float("nan"), float("inf"), "NaN", 0, -5, None, True):
+            with self.subTest(amount=bad):
+                row = self._confirmed()
+                row["amount"] = bad
+                result = self._verify(mock_get, self._history(row), self._header())
+                self.assertEqual(result, {"verified": False, "error": "malformed_rtc_tx_amount"})
+
+
+class TestRtcHardening(RtcTestBase):
+    @patch("requests.get")
+    def test_explicit_confirmed_status_requires_transfer_in(self, mock_get):
+        # Item 4: a status-bearing row of another type must not verify.
+        row = dict(self._confirmed(), status="confirmed", type="reward", reason=None)
+        result = self._verify(mock_get, self._history(row), self._header())
+        self.assertEqual(result, {"verified": False, "error": "unsettled_rtc_tx:confirmed"})
+
+    @patch("requests.get")
+    def test_explicit_confirmed_transfer_in_verifies(self, mock_get):
+        row = dict(self._confirmed(), status="confirmed")
+        del row["reason"]
+        result = self._verify(mock_get, self._history(row), self._header())
+        self.assertTrue(result["verified"], result)
+
+    @patch("requests.get")
+    def test_other_final_looking_statuses_are_rejected(self, mock_get):
+        for status in ("settled", "completed", "finalized", "success", "paid"):
+            with self.subTest(status=status):
+                row = dict(self._confirmed(), status=status)
+                result = self._verify(mock_get, self._history(row), self._header())
+                self.assertEqual(result, {"verified": False, "error": f"unsettled_rtc_tx:{status}"})
+
+    @patch("requests.get")
+    def test_missing_zero_or_non_finite_timestamp_fails_closed(self, mock_get):
+        # Item 5.
+        for bad in (None, 0, float("nan"), "1791380000", "missing"):
+            with self.subTest(timestamp=bad):
+                row = self._confirmed()
+                if bad == "missing":
+                    del row["timestamp"]
+                else:
+                    row["timestamp"] = bad
+                result = self._verify(mock_get, self._history(row), self._header())
+                self.assertEqual(result, {"verified": False, "error": "missing_rtc_tx_timestamp"})
+
+    @patch("requests.get")
+    def test_future_timestamp_is_rejected(self, mock_get):
+        row = dict(self._confirmed(), timestamp=int(time.time()) + 3600)
+        result = self._verify(mock_get, self._history(row), self._header())
+        self.assertEqual(result, {"verified": False, "error": "future_rtc_tx"})
+
+    @patch("requests.get")
+    def test_response_miner_id_must_match_pay_to(self, mock_get):
+        # Item 6.
+        for miner_id in ("attacker", None, ""):
+            with self.subTest(miner_id=miner_id):
+                result = self._verify(mock_get, self._history(self._confirmed(), miner_id=miner_id),
+                                      self._header())
+                self.assertEqual(result, {"verified": False, "error": "rtc_history_wallet_mismatch"})
+
+    def test_header_ids_must_be_canonical_strings(self):
+        # Item 7: no str() coercion of None, numbers or containers.
+        cases = [
+            ({"tx_hash": None}, "missing_tx_hash"),
+            ({"tx_hash": 123}, "malformed_tx_hash"),
+            ({"tx_hash": ["a"]}, "malformed_tx_hash"),
+            ({"tx_hash": "None"}, "malformed_tx_hash"),
+            ({"tx_hash": TX_HASH.upper()}, "malformed_tx_hash"),
+            ({"tx_hash": f" {TX_HASH}"}, "malformed_tx_hash"),
+            ({"from_wallet": None}, "missing_from_wallet"),
+            ({"from_wallet": 42}, "malformed_from_wallet"),
+            ({"from_wallet": {"a": 1}}, "malformed_from_wallet"),
+            ({"from_wallet": "a:b"}, "malformed_from_wallet"),
+            ({"to_wallet": 7}, "rtc_pay_to_mismatch"),
+        ]
+        for overrides, error in cases:
+            with self.subTest(overrides=overrides):
+                result = x402_bridge._verify_rtc_payment(self._header(**overrides), "atlas_query")
+                self.assertEqual(result, {"verified": False, "error": error})
+
+    @patch("requests.get")
+    def test_row_ids_are_not_coerced(self, mock_get):
+        row = self._confirmed()
+        row["from"] = None
+        result = self._verify(mock_get, self._history(row), self._header())
+        self.assertEqual(result, {"verified": False, "error": "rtc_from_wallet_mismatch"})
+
+        row = self._confirmed()
+        row["tx_hash"] = int("123")
+        result = self._verify(mock_get, self._history(row), self._header())
+        self.assertEqual(result, {"verified": False, "error": "rtc_tx_not_found"})
+
+    @patch("requests.get")
+    def test_duplicate_tx_hash_rows_are_rejected(self, mock_get):
+        # Item 8.
+        result = self._verify(mock_get, self._history(self._confirmed(), self._confirmed()), self._header())
+        self.assertEqual(result, {"verified": False, "error": "rtc_tx_ambiguous"})
+
+    @patch("requests.get")
+    def test_malformed_history_body_is_rejected(self, mock_get):
+        mock_get.return_value = FakeResponse({"miner_id": PAY_TO, "transactions": "nope"})
+        result = x402_bridge._verify_rtc_payment(self._header(), "atlas_query")
+        self.assertEqual(result, {"verified": False, "error": "malformed_rtc_history"})
 
 
 if __name__ == "__main__":
