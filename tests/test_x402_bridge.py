@@ -410,5 +410,98 @@ class TestRtcHardening(RtcTestBase):
         self.assertEqual(result, {"verified": False, "error": "malformed_rtc_history"})
 
 
+class TestRtcRound2Hardening(RtcTestBase):
+    @patch("requests.get")
+    def test_in_memory_or_empty_db_path_fails_closed(self, mock_get):
+        # Item 1: each connection to ":memory:" is a fresh DB, so replay would pass.
+        mock_get.return_value = self._history(self._confirmed())
+        for bad in (":memory:", "", "file::memory:", "file:x?mode=memory&cache=shared",
+                    "FILE:rtc.db", " /tmp/rtc.db", self._tmp.name):
+            with self.subTest(db=bad), patch.dict("os.environ", {"RTC_PAYMENT_DB": bad}):
+                first = x402_bridge._verify_rtc_payment(self._header(), "atlas_query")
+                second = x402_bridge._verify_rtc_payment(self._header(), "atlas_query")
+                self.assertFalse(first["verified"], first)
+                self.assertFalse(second["verified"], second)
+                self.assertTrue(first["error"].startswith("invalid_rtc_payment_db"), first)
+        mock_get.assert_not_called()
+
+    def test_consume_refuses_in_memory_db(self):
+        with patch.dict("os.environ", {"RTC_PAYMENT_DB": ":memory:"}):
+            with self.assertRaises(x402_bridge.RtcPaymentDbConfigError):
+                x402_bridge._consume_rtc_tx_hash(TX_HASH, "RTCsender", PAY_TO, 0.1, "atlas_query")
+
+    @patch("requests.get")
+    def test_trailing_newline_ids_are_rejected(self, mock_get):
+        # Item 2: re.match + "$" would accept a final "\n".
+        result = x402_bridge._verify_rtc_payment(self._header(tx_hash=TX_HASH + "\n"), "atlas_query")
+        self.assertEqual(result, {"verified": False, "error": "malformed_tx_hash"})
+        result = x402_bridge._verify_rtc_payment(self._header(from_wallet="RTCsender\n"), "atlas_query")
+        self.assertEqual(result, {"verified": False, "error": "malformed_from_wallet"})
+
+        mock_get.assert_not_called()
+
+        # Row-side sender check, even if a row's sender and reason agree.
+        row = self._confirmed(sender="RTCsender\n")
+        self.assertFalse(x402_bridge._rtc_history_row_is_settled(row, TX_HASH))
+        self.assertTrue(x402_bridge._rtc_history_row_is_settled(self._confirmed(), TX_HASH))
+
+    @patch("requests.get")
+    def test_non_positive_or_invalid_max_age_fails_closed(self, mock_get):
+        # Item 3: max age must never disable freshness.
+        old_row = dict(self._confirmed(), timestamp=1_000_000_000)
+        for bad in ("0", "-1", "abc"):
+            with self.subTest(max_age=bad), patch.dict("os.environ", {"RTC_PAYMENT_MAX_AGE_SECONDS": bad}):
+                result = self._verify(mock_get, self._history(old_row), self._header())
+                self.assertEqual(result, {"verified": False, "error": "invalid_rtc_payment_max_age"})
+                result = self._verify(mock_get, self._history(self._confirmed()), self._header())
+                self.assertEqual(result, {"verified": False, "error": "invalid_rtc_payment_max_age"})
+
+    def test_flag_accepts_exactly_one(self):
+        # Item 5.
+        for value, expected in (("1", True), (" 1", True), ("1 ", True), ("true", False),
+                                ("yes", False), ("on", False), ("TRUE", False), ("2", False),
+                                ("0", False), ("", False), ("01", False)):
+            with self.subTest(value=value), patch.dict("os.environ", {"RTC_X402_PAYMENTS_ENABLED": value}):
+                self.assertIs(x402_bridge._rtc_payments_enabled(), expected)
+
+
+class TestRtcAdvertising(unittest.TestCase):
+    """Item 4: discovery must not advertise RTC while the RTC path is off."""
+
+    def setUp(self):
+        from flask import Flask
+
+        app = Flask(__name__)
+        app.register_blueprint(x402_bridge.x402_bp)
+        self.client = app.test_client()
+
+    def _get(self, path, flag):
+        with patch.dict("os.environ", {"RTC_X402_PAYMENTS_ENABLED": flag}):
+            resp = self.client.get(path)
+        self.assertEqual(resp.status_code, 200)
+        return resp.get_json()
+
+    def test_pricing_hides_rtc_when_disabled(self):
+        for flag in ("0", "true"):
+            with self.subTest(flag=flag):
+                body = self._get("/api/x402/pricing", flag)
+                self.assertFalse(body["dual_economy"])
+                self.assertEqual(body["accepts"], ["x402_usdc"])
+                self.assertNotIn("rustchain_rtc", json.dumps(body))
+                self.assertTrue(all("rtc_equivalent" not in v for v in body["pricing"].values()))
+
+    def test_pricing_advertises_rtc_when_enabled(self):
+        body = self._get("/api/x402/pricing", "1")
+        self.assertTrue(body["dual_economy"])
+        self.assertEqual(body["accepts"], ["x402_usdc", "rustchain_rtc"])
+        self.assertEqual(body["pricing"]["inference_llm"]["rtc_equivalent"], 0.1)
+
+    def test_agent_card_mentions_rtc_only_when_enabled(self):
+        off = self._get("/.well-known/agent-card.json", "0")
+        self.assertNotIn("RTC", off["description"])
+        on = self._get("/.well-known/agent-card.json", "1")
+        self.assertIn("RTC on RustChain", on["description"])
+
+
 if __name__ == "__main__":
     unittest.main()
