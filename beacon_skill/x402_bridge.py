@@ -18,9 +18,13 @@ Beacon 2.9.0 — Elyan Labs.
 
 import base64
 import json
+import math
 import os
+import re
+import sqlite3
 import time
 from functools import wraps
+from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
 from flask import Blueprint, Response, jsonify, request
@@ -36,8 +40,6 @@ PAY_TO_ADDRESS = os.environ.get("X402_PAY_TO", "")
 X402_VERSION = 2
 
 x402_bp = Blueprint("x402_bridge", __name__)
-_VERIFIED_RTC_TX_HASHES: Dict[str, float] = {}
-_FINAL_RTC_STATUSES = {"settled", "confirmed", "completed", "finalized", "success", "paid"}
 
 
 # ── Pricing table (USDC, 6 decimals) ──
@@ -170,45 +172,207 @@ def x402_required(service_key: str, description: str = ""):
     return decorator
 
 
+_RTC_TX_HASH_RE = re.compile(r"[0-9a-f]{32}")  # always used with fullmatch()
+# RustChain wallet ids: miner ids and RTC addresses. ":" is excluded so the
+# confirmer reason "transfer_in:<from>:<tx_hash>" stays unambiguous.
+_RTC_WALLET_RE = re.compile(r"[A-Za-z0-9._-]{1,128}")  # always used with fullmatch()
+_RTC_HISTORY_LIMIT = 200          # node caps /wallet/history at 200 rows
+_RTC_FUTURE_SKEW_SECONDS = 300
+_RTC_DEFAULT_MAX_AGE_SECONDS = 3600
+
+
+def _rtc_payments_enabled() -> bool:
+    """RTC payments are OFF unless RTC_X402_PAYMENTS_ENABLED is exactly "1".
+
+    Any other value, including " 1" or "1 " with stray whitespace, "true", "yes",
+    "on" or "2", leaves the path disabled, so the kill switch is unambiguous.
+
+    The header proves knowledge of a public transfer, not ownership of it, so
+    an observer can claim someone else's confirmed payment first. Keep the path
+    disabled until payments are bound to a payer-held secret (see #964 / PR).
+    """
+    return os.environ.get("RTC_X402_PAYMENTS_ENABLED", "0") == "1"
+
+
+class RtcPaymentDbConfigError(RuntimeError):
+    """RTC_PAYMENT_DB does not name a persistent on-disk SQLite file."""
+
+
+def _rtc_payment_db_path() -> str:
+    """Return the replay DB path, refusing anything that is not a real file.
+
+    Replay protection only holds if every worker and every restart sees the
+    same database. ":memory:", "" and "file:" URIs (including in-memory URIs
+    such as "file::memory:" or "file:x?mode=memory") would give each
+    connection a private, empty database, so they are rejected.
+    """
+    raw = os.environ.get("RTC_PAYMENT_DB")
+    if raw is None:
+        return str(Path.home() / ".beacon" / "x402_rtc_payments.db")
+    path = raw.strip()
+    if (
+        not path
+        or path != raw
+        or path == ":memory:"
+        or path.lower().startswith("file:")
+        or "\0" in path
+    ):
+        raise RtcPaymentDbConfigError("invalid_rtc_payment_db: must be a persistent file path")
+    # A relative or "~" path resolves against the process's working directory
+    # or user, so two workers (or a restart from another directory) could
+    # each get their own replay DB. Require one unambiguous absolute path.
+    if not os.path.isabs(path):
+        raise RtcPaymentDbConfigError("invalid_rtc_payment_db: path must be absolute")
+    if os.path.isdir(path):
+        raise RtcPaymentDbConfigError("invalid_rtc_payment_db: path is a directory")
+    return path
+
+
+def _rtc_payment_db() -> sqlite3.Connection:
+    path = _rtc_payment_db_path()
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    conn = sqlite3.connect(path, timeout=10)
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS consumed_rtc_payments ("
+        " tx_hash TEXT PRIMARY KEY,"
+        " from_wallet TEXT NOT NULL,"
+        " pay_to TEXT NOT NULL,"
+        " amount_rtc REAL NOT NULL,"
+        " service_key TEXT NOT NULL,"
+        " consumed_at REAL NOT NULL)"
+    )
+    return conn
+
+
+def _rtc_tx_hash_consumed(tx_hash: str) -> bool:
+    """Cheap early check; the atomic INSERT in _consume_rtc_tx_hash is authoritative."""
+    conn = _rtc_payment_db()
+    try:
+        return conn.execute(
+            "SELECT 1 FROM consumed_rtc_payments WHERE tx_hash = ?", (tx_hash,)
+        ).fetchone() is not None
+    finally:
+        conn.close()
+
+
+def _consume_rtc_tx_hash(tx_hash: str, from_wallet: str, pay_to: str,
+                         amount_rtc: float, service_key: str) -> bool:
+    """Atomically claim tx_hash. Returns False if it was already consumed.
+
+    The PRIMARY KEY makes the claim atomic across threads, gunicorn workers
+    and restarts: exactly one INSERT for a given tx_hash can succeed.
+    """
+    conn = _rtc_payment_db()
+    try:
+        with conn:
+            conn.execute(
+                "INSERT INTO consumed_rtc_payments"
+                " (tx_hash, from_wallet, pay_to, amount_rtc, service_key, consumed_at)"
+                " VALUES (?, ?, ?, ?, ?, ?)",
+                (tx_hash, from_wallet, pay_to, amount_rtc, service_key, time.time()),
+            )
+        return True
+    except sqlite3.IntegrityError:
+        return False
+    finally:
+        conn.close()
+
+
+def _finite_positive_number(value: Any) -> Optional[float]:
+    """Return value as a float only if it is a real, finite, positive number."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    number = float(value)
+    if not math.isfinite(number) or number <= 0:
+        return None
+    return number
+
+
+def _rtc_history_row_is_settled(tx: Dict[str, Any], tx_hash: str) -> bool:
+    """Return True only on positive evidence that a /wallet/history row is settled.
+
+    RustChain transfers are two-phase. /wallet/history merges two sources:
+
+    * ``ledger`` rows (balance already moved). The pending-transfer confirmer
+      writes the recipient's row with reason ``transfer_in:<from>:<tx_hash>``;
+      these rows carry a ``reason`` and no ``status`` field.
+    * ``pending_ledger`` rows that are not yet confirmed. These carry an
+      explicit ``status`` (``pending``, ``voided``, ...) and no ``reason``.
+
+    Every accepted row must be a ``transfer_in`` from a well-formed sender.
+    A row with an explicit status is accepted only if that status is
+    ``confirmed``. A row with no status is accepted only if it carries the
+    confirmer's exact ledger reason for this sender and tx_hash. Anything else
+    is treated as unsettled.
+    """
+    if tx.get("type") != "transfer_in":
+        return False
+    tx_from = tx.get("from")
+    if not isinstance(tx_from, str) or not _RTC_WALLET_RE.fullmatch(tx_from):
+        return False
+
+    status = tx.get("status")
+    if status is not None:
+        return isinstance(status, str) and status.strip().lower() == "confirmed"
+    return tx.get("reason") == f"transfer_in:{tx_from}:{tx_hash}"
+
+
 def _verify_rtc_payment(rtc_header: str, service_key: str) -> Dict[str, Any]:
     """Verify RTC payment for dual-economy support.
 
+    Disabled unless RTC_X402_PAYMENTS_ENABLED is set (see _rtc_payments_enabled).
+
     RTC header format:
-    {"tx_hash": "...", "amount_rtc": 1.0, "from_wallet": "...", "to_wallet": "..."}
+    {"tx_hash": "<32 hex>", "amount_rtc": 1.0, "from_wallet": "...", "to_wallet": "..."}
 
     The recipient wallet is configured server-side with RTC_PAY_TO,
     X402_RTC_PAY_TO, RUSTCHAIN_PAY_TO, or X402_PAY_TO. A client-supplied
     to_wallet is only accepted when it matches that configured recipient.
+    Each tx_hash is consumed at most once, recorded durably in the SQLite DB
+    at RTC_PAYMENT_DB (default ~/.beacon/x402_rtc_payments.db).
     Conversion: 1 RTC = $0.10 USD
     """
     import requests as _req
+
+    if not _rtc_payments_enabled():
+        return {"verified": False, "error": "rtc_payments_disabled"}
 
     try:
         data = json.loads(rtc_header)
         if not isinstance(data, dict):
             return {"verified": False, "error": "malformed_rtc_payment"}
 
-        tx_hash = str(data.get("tx_hash", "")).strip()
-        from_wallet = str(data.get("from_wallet", "")).strip()
-        amount_rtc = float(data.get("amount_rtc", 0))
+        tx_hash = data.get("tx_hash")
+        from_wallet = data.get("from_wallet")
+        header_pay_to = data.get("to_wallet")
         configured_pay_to = (
             os.environ.get("RTC_PAY_TO")
             or os.environ.get("X402_RTC_PAY_TO")
             or os.environ.get("RUSTCHAIN_PAY_TO")
             or PAY_TO_ADDRESS
         ).strip()
-        header_pay_to = str(data.get("to_wallet", "")).strip()
 
-        if not tx_hash:
+        # JSON null / absent / "" are "missing"; anything else must be a
+        # canonical string. No str() coercion of None, numbers or containers.
+        if tx_hash is None or tx_hash == "":
             return {"verified": False, "error": "missing_tx_hash"}
-        if not from_wallet:
+        if not isinstance(tx_hash, str) or not _RTC_TX_HASH_RE.fullmatch(tx_hash):
+            return {"verified": False, "error": "malformed_tx_hash"}
+        if from_wallet is None or from_wallet == "":
             return {"verified": False, "error": "missing_from_wallet"}
+        if not isinstance(from_wallet, str) or not _RTC_WALLET_RE.fullmatch(from_wallet):
+            return {"verified": False, "error": "malformed_from_wallet"}
         if not configured_pay_to:
             return {"verified": False, "error": "missing_rtc_pay_to"}
-        if header_pay_to and header_pay_to != configured_pay_to:
-            return {"verified": False, "error": "rtc_pay_to_mismatch"}
-        if tx_hash in _VERIFIED_RTC_TX_HASHES:
-            return {"verified": False, "error": "rtc_payment_replay"}
+        if header_pay_to is not None and header_pay_to != "":
+            if not isinstance(header_pay_to, str) or header_pay_to != configured_pay_to:
+                return {"verified": False, "error": "rtc_pay_to_mismatch"}
+
+        amount_rtc = _finite_positive_number(data.get("amount_rtc"))
+        if amount_rtc is None:
+            return {"verified": False, "error": "malformed_amount_rtc"}
 
         # Convert USDC price to RTC (1 RTC = $0.10)
         usdc_price = PRICING.get(service_key, 10_000)
@@ -217,41 +381,74 @@ def _verify_rtc_payment(rtc_header: str, service_key: str) -> Dict[str, Any]:
         if amount_rtc < rtc_required:
             return {"verified": False, "error": f"Insufficient RTC: need {rtc_required:.4f}"}
 
+        try:
+            _rtc_payment_db_path()
+        except RtcPaymentDbConfigError as e:
+            return {"verified": False, "error": str(e)}
+        if _rtc_tx_hash_consumed(tx_hash):
+            return {"verified": False, "error": "rtc_payment_replay"}
+
         # Verify the actual transfer in the recipient wallet history. Checking
         # only the sender balance would let clients invent tx_hash values.
         resp = _req.get(
             f"{RUSTCHAIN_API_BASE}/wallet/history",
-            params={"miner_id": configured_pay_to},
+            params={"miner_id": configured_pay_to, "limit": _RTC_HISTORY_LIMIT},
             verify=True,
             timeout=10,
         )
         if not resp.ok:
             return {"verified": False, "error": "RustChain verification failed"}
 
-        txs = resp.json().get("transactions", [])
-        matching_tx = next((tx for tx in txs if str(tx.get("tx_hash", "")) == tx_hash), None)
-        if not matching_tx:
-            return {"verified": False, "error": "rtc_tx_not_found"}
+        body = resp.json()
+        if not isinstance(body, dict) or body.get("miner_id") != configured_pay_to:
+            return {"verified": False, "error": "rtc_history_wallet_mismatch"}
+        txs = body.get("transactions")
+        if not isinstance(txs, list):
+            return {"verified": False, "error": "malformed_rtc_history"}
 
-        tx_amount = float(matching_tx.get("amount") or matching_tx.get("amount_rtc") or 0)
+        matches = [tx for tx in txs if isinstance(tx, dict) and tx.get("tx_hash") == tx_hash]
+        if not matches:
+            return {"verified": False, "error": "rtc_tx_not_found"}
+        if len(matches) > 1:
+            return {"verified": False, "error": "rtc_tx_ambiguous"}
+        matching_tx = matches[0]
+
+        tx_amount = _finite_positive_number(matching_tx.get("amount"))
+        if tx_amount is None:
+            return {"verified": False, "error": "malformed_rtc_tx_amount"}
         if tx_amount < rtc_required:
             return {"verified": False, "error": f"Insufficient RTC transfer: need {rtc_required:.4f}"}
 
-        tx_from = str(matching_tx.get("from", "")).strip()
-        if tx_from != from_wallet:
+        if matching_tx.get("from") != from_wallet:
             return {"verified": False, "error": "rtc_from_wallet_mismatch"}
 
-        status = str(matching_tx.get("status", "")).strip().lower()
-        if status not in _FINAL_RTC_STATUSES:
-            return {"verified": False, "error": f"unsettled_rtc_tx:{status or 'missing'}"}
+        if not _rtc_history_row_is_settled(matching_tx, tx_hash):
+            status = matching_tx.get("status")
+            label = status.strip().lower() if isinstance(status, str) and status.strip() else "unproven"
+            return {"verified": False, "error": f"unsettled_rtc_tx:{label}"}
 
-        max_age_s = int(os.environ.get("RTC_PAYMENT_MAX_AGE_SECONDS", "3600"))
-        tx_timestamp = matching_tx.get("timestamp")
-        if tx_timestamp and max_age_s > 0:
-            if float(tx_timestamp) < time.time() - max_age_s:
-                return {"verified": False, "error": "stale_rtc_tx"}
+        # A confirmed row's timestamp is when the node's confirmer settled it,
+        # so the window starts at settlement. A missing or invalid timestamp
+        # fails closed. Replay is enforced separately by the durable DB claim.
+        now = time.time()
+        tx_timestamp = _finite_positive_number(matching_tx.get("timestamp"))
+        if tx_timestamp is None:
+            return {"verified": False, "error": "missing_rtc_tx_timestamp"}
+        if tx_timestamp > now + _RTC_FUTURE_SKEW_SECONDS:
+            return {"verified": False, "error": "future_rtc_tx"}
+        try:
+            max_age_s = int(os.environ.get("RTC_PAYMENT_MAX_AGE_SECONDS", str(_RTC_DEFAULT_MAX_AGE_SECONDS)))
+        except ValueError:
+            return {"verified": False, "error": "invalid_rtc_payment_max_age"}
+        if max_age_s <= 0:
+            # Never let configuration disable freshness; fail closed instead.
+            return {"verified": False, "error": "invalid_rtc_payment_max_age"}
+        if tx_timestamp < now - max_age_s:
+            return {"verified": False, "error": "stale_rtc_tx"}
 
-        _VERIFIED_RTC_TX_HASHES[tx_hash] = time.time()
+        # Consume last, only after every check passed.
+        if not _consume_rtc_tx_hash(tx_hash, from_wallet, configured_pay_to, tx_amount, service_key):
+            return {"verified": False, "error": "rtc_payment_replay"}
         return {"verified": True, "tx_hash": tx_hash, "amount_rtc": tx_amount}
     except Exception as e:
         return {"verified": False, "error": str(e)}
@@ -262,22 +459,25 @@ def _verify_rtc_payment(rtc_header: str, service_key: str) -> Dict[str, Any]:
 @x402_bp.route("/api/x402/pricing", methods=["GET"])
 def x402_pricing():
     """Public pricing table for all x402-gated services."""
+    rtc_enabled = _rtc_payments_enabled()
     table = {}
     for key, amount in PRICING.items():
         usd = amount / 1_000_000
-        rtc = usd / 0.10
         table[key] = {
             "usdc_amount": amount,
             "usd": f"${usd:.4f}",
-            "rtc_equivalent": round(rtc, 4),
             "network": f"eip155:{BASE_CHAIN_ID}",
         }
+        if rtc_enabled:
+            table[key]["rtc_equivalent"] = round(usd / 0.10, 4)
+    # Only advertise RTC while the RTC path is enabled; otherwise an agent
+    # could send an irreversible transfer that the server will then reject.
     return jsonify({
         "pricing": table,
         "pay_to": PAY_TO_ADDRESS,
         "facilitator": X402_FACILITATOR,
-        "dual_economy": True,
-        "accepts": ["x402_usdc", "rustchain_rtc"],
+        "dual_economy": rtc_enabled,
+        "accepts": ["x402_usdc", "rustchain_rtc"] if rtc_enabled else ["x402_usdc"],
     })
 
 
@@ -290,7 +490,11 @@ def conway_agent_card():
         "description": (
             "Lab GPU inference and video generation. "
             "V100 32GB, POWER8 512GB RAM, RTX 3060/4070/5070. "
-            "Accepts x402 USDC on Base and RTC on RustChain."
+            + (
+                "Accepts x402 USDC on Base and RTC on RustChain."
+                if _rtc_payments_enabled()
+                else "Accepts x402 USDC on Base."
+            )
         ),
         "active": True,
         "x402Support": True,
