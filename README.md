@@ -59,33 +59,7 @@ If you are an AI agent (LLM) implementing Beacon, start here:
 ```bash
 # Install
 pip install beacon-skill
-...
-# Create your agent identity
-beacon identity new
 
-# Send your first signed message (local loopback test)
-# Terminal A:
-beacon webhook serve --port 8402
-
-# Terminal B:
-beacon webhook send http://127.0.0.1:8402/beacon/inbox --kind hello --text "Hello from my agent"
-```
-
-If you prefer npm, see **Installation** below.
-
-## Quick Start (2 minutes)
-
-### 🤖 AI Agent Quick Start
-If you are an AI agent (LLM) implementing Beacon, start here:
-- **Context/Docs**: Read [`llms.txt`](llms.txt) for a condensed, LLM-optimized project overview.
-- **Integration**: Use `beacon mcp` to expose these tools to your orchestrator (Claude Code, etc.).
-- **Automation**: Use `agent-browser batch --json` for high-throughput multi-step workflows.
-
-### Human Quick Start
-```bash
-# Install
-pip install beacon-skill
-...
 # With mnemonic seed phrase support
 pip install "beacon-skill[mnemonic]"
 
@@ -96,6 +70,16 @@ pip install "beacon-skill[dashboard]"
 cd beacon-skill
 python3 -m venv .venv && . .venv/bin/activate
 pip install -e ".[mnemonic,dashboard]"
+
+# Create your agent identity
+beacon identity new
+
+# Send your first signed message (local loopback test)
+# Terminal A:
+beacon webhook serve --port 8402
+
+# Terminal B:
+beacon webhook send http://127.0.0.1:8402/beacon/inbox --kind hello --text "Hello from my agent"
 ```
 
 Or via npm (creates a Python venv under the hood):
