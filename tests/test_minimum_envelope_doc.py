@@ -35,8 +35,13 @@ def test_minimum_envelope_doc_has_minimal_example_and_receiver_rules() -> None:
         "stale_ts",
         "future_ts",
         "replay_nonce",
+        "legacy_unsigned",
     ):
         assert f"| `{reason}` |" in text
+
+    assert "## Legacy unsigned (v1) trust and authorization policy" in text
+    assert "verified: None" in text
+    assert "verified == True" in text
 
     assert "sort_keys=True" in text
     assert 'separators=(",", ":")' in text

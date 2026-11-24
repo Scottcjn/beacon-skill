@@ -238,6 +238,16 @@ async def send_with_retry(transport, envelope, max_retries=3):
 
 ---
 
+## Legacy Unsigned Envelopes (v1 Policy)
+
+Beacon still parses legacy unsigned v1 envelopes (`sig` omitted or `None`) for backward compatibility, reporting `reason: "legacy_unsigned"` at webhook ingress and `verified: None` in `beacon_skill.inbox.read_inbox()`.
+
+- **Unauthenticated**: Unsigned v1 envelopes carry no Ed25519 sender proof, nonce replay protection, or signature verification.
+- **Authorization boundary**: Treat unsigned v1 messages as compatibility-only / low-trust. Applications must not authorize payments, reputation updates, job/contract transitions, or other privileged/state-mutating actions from an unsigned v1 envelope alone.
+- **Gating privileged handlers**: Require a verified v2 identity (`verified == True`, e.g., `"when": {"verified": true}` in `RulesEngine`) or an equivalent application-specific authentication check. See [MINIMUM_ENVELOPE.md](MINIMUM_ENVELOPE.md) for the full envelope verification contract.
+
+---
+
 ## Summary
 
 | Concept | Purpose | Implementation |
