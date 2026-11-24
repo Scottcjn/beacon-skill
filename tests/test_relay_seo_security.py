@@ -165,6 +165,62 @@ class TestRelaySeoSecurity(unittest.TestCase):
         self.assertEqual(json.loads(hist["before_state"])["seo_url"], "")
         self.assertEqual(json.loads(hist["after_state"])["seo_url"], "https://example.com/agent")
 
+    def test_relay_client_partial_update_verifies_with_stored_other_field(self) -> None:
+        """#963: a description-only update must verify when seo_url is already stored."""
+        from unittest import mock
+
+        from beacon_skill.transports.relay import RelayClient
+
+        signing_key, agent_id = self._insert_existing_agent()
+        with beacon_chat.app.app_context():
+            db = beacon_chat.get_db()
+            db.execute(
+                "UPDATE relay_agents SET seo_url = ? WHERE agent_id = ?",
+                ("https://stored.example/", agent_id),
+            )
+            db.commit()
+
+        identity = mock.Mock()
+        identity.agent_id = agent_id
+        identity.sign_hex = lambda data: signing_key.sign(data).signature.hex()
+        sent = {}
+
+        def fake_post(url, json=None, headers=None, timeout=None):
+            sent["body"] = json
+            return mock.Mock(json=lambda: {})
+
+        with mock.patch("beacon_skill.transports.relay.requests.post", fake_post):
+            RelayClient("https://relay.test").heartbeat_seo(
+                identity, "relay_valid_token", seo_description="Only the description"
+            )
+
+        response = self.client.post(
+            "/relay/heartbeat/seo",
+            json=sent["body"],
+            headers={"Authorization": "Bearer relay_valid_token"},
+        )
+        self.assertEqual(response.status_code, 200, response.get_json())
+        self.assertEqual(response.get_json()["seo"]["changed_fields"], ["seo_description"])
+
+        with beacon_chat.app.app_context():
+            row = beacon_chat.get_db().execute(
+                "SELECT seo_url, seo_description FROM relay_agents WHERE agent_id = ?",
+                (agent_id,),
+            ).fetchone()
+        self.assertEqual(row["seo_url"], "https://stored.example/")
+        self.assertEqual(row["seo_description"], "Only the description")
+
+    def test_relay_heartbeat_seo_partial_update_rejects_wrong_signature(self) -> None:
+        signing_key, agent_id = self._insert_existing_agent()
+        payload = self._signed_payload(signing_key, agent_id, seo_url="https://other.example/")
+        del payload["seo_url"]
+        response = self.client.post(
+            "/relay/heartbeat/seo",
+            json=payload,
+            headers={"Authorization": "Bearer relay_valid_token"},
+        )
+        self.assertEqual(response.status_code, 403)
+
     def test_relay_seo_history_hides_operator_fields_without_admin(self) -> None:
         signing_key, agent_id = self._insert_existing_agent()
         payload = self._signed_payload(signing_key, agent_id)
