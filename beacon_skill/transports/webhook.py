@@ -77,7 +77,15 @@ class WebhookHandler(BaseHTTPRequestHandler):
             return
 
         MAX_BODY_SIZE = 1_048_576  # 1 MB
-        content_length = int(self.headers.get("Content-Length", 0))
+        raw_length = self.headers.get("Content-Length", "0")
+        try:
+            content_length = int(raw_length)
+        except (TypeError, ValueError):
+            self._send_json(400, {"error": "Invalid Content-Length header"})
+            return
+        if content_length < 0:
+            self._send_json(400, {"error": "Invalid Content-Length header"})
+            return
         if content_length > MAX_BODY_SIZE:
             self._send_json(413, {"error": "Payload too large"})
             return
@@ -92,6 +100,9 @@ class WebhookHandler(BaseHTTPRequestHandler):
                 envelopes = [data]
             elif isinstance(data, dict) and "text" in data:
                 # Wrapped text with embedded envelopes.
+                if not isinstance(data["text"], str):
+                    self._send_json(400, {"error": "Invalid 'text' field: must be string"})
+                    return
                 envelopes = decode_envelopes(data["text"])
             elif isinstance(data, list):
                 envelopes = data
@@ -108,6 +119,18 @@ class WebhookHandler(BaseHTTPRequestHandler):
         accepted = 0
 
         for env in envelopes:
+            if not isinstance(env, dict):
+                results.append(
+                    {
+                        "nonce": "",
+                        "kind": "",
+                        "verified": False,
+                        "accepted": False,
+                        "reason": "invalid_envelope",
+                    }
+                )
+                continue
+
             _learn_key_from_envelope(env, known_keys)
             verified = verify_envelope(env, known_keys=known_keys)
 

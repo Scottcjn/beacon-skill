@@ -14,6 +14,9 @@ from ..identity import AgentIdentity
 from ..inbox import _learn_key_from_envelope, load_known_keys, save_known_keys
 from ..storage import append_jsonl
 
+MAX_BODY_SIZE = 1_048_576  # 1 MB
+
+
 class BeaconEnvelope(BaseModel):
     """Pydantic model for individual Beacon envelopes."""
     kind: str
@@ -63,23 +66,43 @@ class FastAPIWebhookServer:
 
         @self.app.post("/beacon/inbox", response_model=WebhookResponse)
         async def inbox(request: Request):
-            # 1. Parse payload
-            try:
-                body = await request.body()
-                text = body.decode("utf-8")
-                # Support both pure JSON envelope and wrapped text
+            # 1. Validate size before/after reading body and parse payload
+            raw_len = request.headers.get("content-length")
+            if raw_len is not None:
                 try:
-                    data = json.loads(text)
-                    if isinstance(data, dict) and "kind" in data:
-                        envelopes = [data]
-                    elif isinstance(data, list):
-                        envelopes = data
-                    else:
-                        envelopes = decode_envelopes(text)
-                except json.JSONDecodeError:
+                    declared_len = int(raw_len)
+                except (TypeError, ValueError):
+                    raise HTTPException(status_code=400, detail="Invalid Content-Length header")
+                if declared_len < 0:
+                    raise HTTPException(status_code=400, detail="Invalid Content-Length header")
+                if declared_len > MAX_BODY_SIZE:
+                    raise HTTPException(status_code=413, detail="Payload too large")
+
+            body = await request.body()
+            if len(body) > MAX_BODY_SIZE:
+                raise HTTPException(status_code=413, detail="Payload too large")
+
+            try:
+                text = body.decode("utf-8")
+            except UnicodeDecodeError as e:
+                raise HTTPException(status_code=400, detail=f"Invalid UTF-8 payload: {str(e)}")
+
+            # Support raw JSON envelope, {"text": "..."} wrapper, envelope list, or raw text
+            try:
+                data = json.loads(text)
+            except json.JSONDecodeError:
+                envelopes = decode_envelopes(text)
+            else:
+                if isinstance(data, dict) and "kind" in data:
+                    envelopes = [data]
+                elif isinstance(data, dict) and "text" in data:
+                    if not isinstance(data["text"], str):
+                        raise HTTPException(status_code=400, detail="Invalid 'text' field: must be string")
+                    envelopes = decode_envelopes(data["text"])
+                elif isinstance(data, list):
+                    envelopes = data
+                else:
                     envelopes = decode_envelopes(text)
-            except Exception as e:
-                raise HTTPException(status_code=400, detail=f"Invalid payload: {str(e)}")
 
             if not envelopes:
                 return WebhookResponse(ok=False, received=0, results=[], error="no_beacon_envelopes_found")
@@ -90,12 +113,22 @@ class FastAPIWebhookServer:
             accepted_count = 0
 
             for env in envelopes:
+                if not isinstance(env, dict):
+                    results.append({
+                        "nonce": "",
+                        "kind": "",
+                        "verified": False,
+                        "accepted": False,
+                        "reason": "invalid_envelope",
+                    })
+                    continue
+
                 _learn_key_from_envelope(env, known_keys)
                 verified = verify_envelope(env, known_keys=known_keys)
-                
+
                 accepted_env = False
                 reason = "ok"
-                
+
                 # Security Gates
                 if env.get("sig") is not None:
                     if verified is False:
@@ -114,14 +147,15 @@ class FastAPIWebhookServer:
                         "platform": "webhook-fastapi",
                         "from": request.client.host if request.client else "unknown",
                         "received_at": time.time(),
-                        "envelope": env,
+                        "text": text,
+                        "envelopes": [env],
                     }
                     append_jsonl("inbox.jsonl", record)
                     accepted_count += 1
 
                 results.append({
-                    "nonce": env.get("nonce", ""),
-                    "kind": env.get("kind", ""),
+                    "nonce": str(env.get("nonce") or ""),
+                    "kind": str(env.get("kind") or ""),
                     "verified": verified,
                     "accepted": accepted_env,
                     "reason": reason
