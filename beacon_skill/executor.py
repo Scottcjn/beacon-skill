@@ -180,18 +180,21 @@ class ActionExecutor:
                 results.append({"action_id": action_id, "status": "no_transport", "reason": "no transport available"})
                 continue
 
-            # Build signed envelope if we have identity
+            # Build signed v2 envelope whenever identity is configured
             envelope = item.get("envelope", {})
-            if self._identity and method == "webhook":
-                try:
-                    from .codec import encode_envelope
-                    signed_text = encode_envelope(envelope, identity=self._identity)
-                    # For webhook, send the envelope dict directly (it gets JSON-encoded)
-                    if self._identity:
-                        envelope = dict(envelope)
-                        envelope["agent_id"] = self._identity.agent_id
-                except Exception:
-                    pass
+            if self._identity and isinstance(envelope, dict) and envelope.get("sig") is None:
+                from .codec import encode_envelope
+
+                unsigned = dict(envelope)
+                unsigned.setdefault("ts", int(time.time()))
+                signed_text = encode_envelope(
+                    unsigned,
+                    version=2,
+                    identity=self._identity,
+                    include_pubkey=True,
+                )
+                _, body_json = signed_text.split("\n", 1)
+                envelope = json.loads(body_json)
 
             # Execute transport
             send_result = self._execute_transport(method, address, envelope)
@@ -274,7 +277,23 @@ class ActionExecutor:
                 host = parts[0]
                 port = int(parts[1]) if len(parts) > 1 else 38400
                 broadcast = self._cfg.get("udp", {}).get("broadcast", False)
-                text = json.dumps(envelope, sort_keys=True)
+                if isinstance(envelope, dict) and envelope.get("sig") is not None:
+                    version = int(envelope.get("v", 2) or 2)
+                    body_json = json.dumps(envelope, sort_keys=True, separators=(",", ":"))
+                    text = f"[BEACON v{version}]\n{body_json}"
+                elif self._identity and isinstance(envelope, dict):
+                    from .codec import encode_envelope
+
+                    unsigned = dict(envelope)
+                    unsigned.setdefault("ts", int(time.time()))
+                    text = encode_envelope(
+                        unsigned,
+                        version=2,
+                        identity=self._identity,
+                        include_pubkey=True,
+                    )
+                else:
+                    text = json.dumps(envelope, sort_keys=True)
                 udp_send(host, port, text.encode("utf-8"), broadcast=broadcast)
                 return {"ok": True}
         except Exception as e:
