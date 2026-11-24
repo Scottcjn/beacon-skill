@@ -3746,6 +3746,16 @@ def relay_heartbeat_seo():
             nonce,
         )
         sig_ok = verify_ed25519(stored_pubkey_hex, signature_hex, sig_payload)
+        if sig_ok is False and not (seo_url_present and seo_description_present):
+            # Partial update: RelayClient.heartbeat_seo cannot know the stored
+            # value of the field it omits, so it signs "" for it (#963).
+            sig_ok = verify_ed25519(stored_pubkey_hex, signature_hex, build_relay_seo_signature_payload(
+                agent_id,
+                seo_url if seo_url_present else "",
+                seo_description if seo_description_present else "",
+                ts_value,
+                nonce,
+            ))
         if sig_ok is None:
             return cors_json({
                 "error": "Signature verification unavailable",
