@@ -123,6 +123,15 @@ class TestRules(unittest.TestCase):
         engine.remove_rule("test")
         self.assertEqual(len(engine.rules()), 0)
 
+    def test_verified_rule_rejects_unsigned_v1(self):
+        engine = self._engine([
+            {"name": "priv", "when": {"kind": "bounty", "verified": True}, "then": {"action": "log"}},
+        ])
+        env = {"kind": "bounty", "agent_id": "bcn_a"}
+        self.assertEqual(len(engine.evaluate({"envelope": env, "verified": None})), 0)
+        self.assertEqual(len(engine.evaluate({"envelope": env, "verified": False})), 0)
+        self.assertEqual(len(engine.evaluate({"envelope": env, "verified": True})), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

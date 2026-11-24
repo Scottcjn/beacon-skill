@@ -106,6 +106,7 @@ These are the main reasons surfaced by the current webhook receivers:
 | `stale_ts` | Timestamp is older than the allowed age window. |
 | `future_ts` | Timestamp is too far in the future. |
 | `replay_nonce` | `nonce` already exists in the replay cache. |
+| `legacy_unsigned` | Unsigned legacy v1 envelope (`sig` omitted or `None`); parsed for backward compatibility with `verified: None` (unauthenticated). |
 
 Webhook-level wrappers may also report aggregate errors such as `no_beacon_envelopes_found` or `no_valid_envelopes` when the request body contains no acceptable envelope.
 
@@ -124,6 +125,14 @@ A receiver should accept a signed envelope only when every step below passes. Ea
 A failure at any step maps to a result code in the [Receiver result codes](#receiver-result-codes) table above. The webhook receiver in `beacon_skill.transports.webhook` is the canonical Python implementation of this checklist; new third-party receivers should match it behavior-for-behavior.
 
 Beacon's stdlib webhook also accepts legacy unsigned envelopes for backward compatibility, but new third-party integrations should only produce signed v2 envelopes.
+
+## Legacy unsigned (v1) trust and authorization policy
+
+Beacon v1 envelopes may be parsed for backward compatibility, but they are **unauthenticated**:
+
+- **Verification state**: Receivers and `beacon_skill.inbox.read_inbox()` distinguish unsigned v1 payloads with `verified: None` (and webhook result reason `legacy_unsigned`), never `verified: True`. A present but falsy `sig` (such as `""`, `0`, or `[]`) is treated as signed and rejected (`signature_invalid` or `signature_unverifiable`), not downgraded to `legacy_unsigned`.
+- **Trust boundary**: Treat unsigned v1 envelopes as low-trust / compatibility-only inputs. Parsing or accepting an envelope into an inbox for backward compatibility does not establish sender identity, freshness, or replay resistance.
+- **Privilege boundary**: Applications must not grant privileged, payment/RTC, reputation, job/contract, or state-mutating capabilities based solely on an unsigned v1 envelope. Privileged actions should require a verified v2 identity (`verified == True`, such as `"when": {"verified": true}` in `beacon_skill.rules.RulesEngine`) or an equivalent application-specific authentication check.
 
 ## Unknown senders and unsupported kinds
 
