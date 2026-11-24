@@ -211,11 +211,24 @@ def webhook_send(
     timeout_s: int = 15,
 ) -> Dict[str, Any]:
     """Send a beacon envelope to a webhook endpoint."""
+    payload = dict(envelope)
+    if identity is not None and payload.get("sig") is None:
+        from ..codec import encode_envelope
+
+        payload.setdefault("ts", int(time.time()))
+        signed_text = encode_envelope(
+            payload,
+            version=2,
+            identity=identity,
+            include_pubkey=True,
+        )
+        _, body_json = signed_text.split("\n", 1)
+        payload = json.loads(body_json)
     headers = {
         "Content-Type": "application/json",
         "User-Agent": "Beacon/1.0.0 (Elyan Labs)",
     }
-    resp = requests.post(url, json=envelope, headers=headers, timeout=timeout_s)
+    resp = requests.post(url, json=payload, headers=headers, timeout=timeout_s)
     try:
         return resp.json()
     except Exception:
