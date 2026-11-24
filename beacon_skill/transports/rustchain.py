@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import math
 import os
 import secrets
 import time
@@ -193,26 +194,47 @@ class RustChainClient:
         memo: str = "",
         nonce: Optional[int] = None,
     ) -> Dict[str, Any]:
+        if not isinstance(to_address, str) or not to_address.strip():
+            raise ValueError("to_address must be a non-empty string")
+        if isinstance(amount_rtc, bool):
+            raise ValueError("amount_rtc must be a positive finite number")
+        try:
+            amount_val = float(amount_rtc)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("amount_rtc must be a positive finite number") from exc
+        if not math.isfinite(amount_val) or amount_val <= 0:
+            raise ValueError("amount_rtc must be a positive finite number")
+
         kp = RustChainKeypair.from_private_key_hex(private_key_hex)
         sk = Ed25519PrivateKey.from_private_bytes(bytes.fromhex(kp.private_key_hex))
         if nonce is None:
-            nonce = int(time.time() * 1000)
+            nonce_int = int(time.time() * 1000)
+        elif isinstance(nonce, bool):
+            raise ValueError("nonce must be an integer")
+        else:
+            try:
+                nonce_int = int(nonce)
+            except (TypeError, ValueError) as exc:
+                raise ValueError("nonce must be an integer") from exc
 
+        to_addr = to_address.strip()
+        # RustChain node (/wallet/transfer/signed) reconstructs tx_data with nonce
+        # as str(int(str(nonce))). Sign the exact same canonical representation.
         tx_data = {
             "from": kp.address,
-            "to": to_address,
-            "amount": float(amount_rtc),
+            "to": to_addr,
+            "amount": amount_val,
             "memo": memo,
-            "nonce": nonce,
+            "nonce": str(nonce_int),
         }
         msg = json.dumps(tx_data, sort_keys=True, separators=(",", ":")).encode()
         sig = sk.sign(msg).hex()
 
         return {
             "from_address": kp.address,
-            "to_address": to_address,
-            "amount_rtc": float(amount_rtc),
-            "nonce": nonce,
+            "to_address": to_addr,
+            "amount_rtc": amount_val,
+            "nonce": nonce_int,
             "signature": sig,
             "public_key": kp.public_key_hex,
             "memo": memo,
